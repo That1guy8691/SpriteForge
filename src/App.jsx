@@ -67,6 +67,10 @@ import {
   EXPORT_PRESETS,
 } from './lib/metadataExport.js';
 import {
+  createProjectExportZip,
+  sanitizeExportName,
+} from './lib/projectExport.js';
+import {
   compareProjectAssets,
   deleteProjectAsset as removeProjectAsset,
   duplicateProjectAsset as copyProjectAsset,
@@ -1659,9 +1663,25 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       return;
     }
     const payload = createProjectBundle(project);
-    const filename = `${project.name.replace(/[^a-z0-9-_]+/gi, '_').toLowerCase() || 'spriteforge_project'}.json`;
+    const filename = `${sanitizeExportName(project.name, 'spriteforge_project')}.json`;
     downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), filename);
     setStatus(`Exported project ${project.name}`);
+  }
+
+  async function exportActiveProjectZip() {
+    const project = activeProject;
+    if (!project) {
+      setStatus('Create or select a project before exporting');
+      return;
+    }
+    try {
+      const blob = await createProjectExportZip(project);
+      const filename = `${sanitizeExportName(project.name, 'spriteforge_project')}.zip`;
+      downloadBlob(blob, filename);
+      setStatus(`Exported ZIP bundle for ${project.name}`);
+    } catch {
+      setStatus('Could not export project ZIP bundle');
+    }
   }
 
   async function importProjectBundle(file) {
@@ -1761,6 +1781,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             compareAssetIds={compareAssetIds}
             assetComparison={assetComparison}
             onExportProject={exportActiveProject}
+            onExportProjectZip={exportActiveProjectZip}
             onImportProject={importProjectBundle}
           />
 
@@ -2346,6 +2367,7 @@ function ProjectLibraryPanel({
   compareAssetIds,
   assetComparison,
   onExportProject,
+  onExportProjectZip,
   onImportProject,
 }) {
   const assets = activeProject?.assets ?? [];
@@ -2375,6 +2397,7 @@ function ProjectLibraryPanel({
         <button type="button" onClick={onCreateProject}>New</button>
         <button type="button" onClick={onSaveAsset}>Save Asset</button>
         <button type="button" onClick={onExportProject}>Export</button>
+        <button type="button" onClick={onExportProjectZip}>Export ZIP</button>
         <button type="button" onClick={() => projectFileInputRef.current?.click()}>Import</button>
         <button type="button" onClick={onDeleteProject}>Delete</button>
         <input
