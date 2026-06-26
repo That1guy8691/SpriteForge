@@ -4,9 +4,11 @@ import {
   BookOpen,
   Check,
   ClipboardCopy,
+  Copy,
   Download,
   FileJson,
   FolderOpen,
+  GitCompare,
   Grid3X3,
   ImagePlus,
   Minus,
@@ -64,6 +66,12 @@ import {
   createMetadataContext,
   EXPORT_PRESETS,
 } from './lib/metadataExport.js';
+import {
+  compareProjectAssets,
+  deleteProjectAsset as removeProjectAsset,
+  duplicateProjectAsset as copyProjectAsset,
+  renameProjectAsset,
+} from './lib/projectAssets.js';
 import {
   createProjectBundle,
   loadStoredProjects,
@@ -301,6 +309,7 @@ function App() {
   const [projects, setProjects] = useState([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState(null);
+  const [compareAssetIds, setCompareAssetIds] = useState([]);
   const [projectNameDraft, setProjectNameDraft] = useState('SpriteForge Project');
   const [activeChainStepId, setActiveChainStepId] = useState('design-lock');
   const imageRef = useRef(null);
@@ -328,6 +337,13 @@ function App() {
     () => projects.find((project) => project.id === activeProjectId) ?? null,
     [projects, activeProjectId]
   );
+  const compareAssets = useMemo(
+    () => compareAssetIds
+      .map((assetId) => activeProject?.assets?.find((asset) => asset.id === assetId))
+      .filter(Boolean),
+    [activeProject, compareAssetIds]
+  );
+  const assetComparison = compareAssets.length === 2 ? compareProjectAssets(compareAssets[0], compareAssets[1]) : null;
 
   const promptMetrics = useMemo(() => {
     const framePixels = Math.max(1, Number(promptConfig.frameSize) || 64);
@@ -638,6 +654,12 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
   useEffect(() => {
     if (!activeProject) return;
     setProjectNameDraft(activeProject.name);
+  }, [activeProject]);
+
+  useEffect(() => {
+    setCompareAssetIds((current) =>
+      current.filter((assetId) => activeProject?.assets?.some((asset) => asset.id === assetId))
+    );
   }, [activeProject]);
 
   useEffect(() => {
@@ -1523,18 +1545,31 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
   function deleteProjectAsset(assetId) {
     if (!activeProjectId) return;
-    setProjects((current) =>
-      current.map((project) =>
-        project.id === activeProjectId
-          ? {
-              ...project,
-              updatedAt: new Date().toISOString(),
-              assets: (project.assets ?? []).filter((asset) => asset.id !== assetId),
-            }
-          : project
-      )
-    );
+    setProjects((current) => removeProjectAsset(current, activeProjectId, assetId));
+    setCompareAssetIds((current) => current.filter((id) => id !== assetId));
     setStatus('Deleted saved asset');
+  }
+
+  function renameSavedAsset(assetId, name) {
+    if (!activeProjectId) return;
+    setProjects((current) => renameProjectAsset(current, activeProjectId, assetId, name));
+    setStatus('Renamed saved asset');
+  }
+
+  function duplicateSavedAsset(assetId) {
+    if (!activeProjectId) return;
+    const sourceAsset = activeProject?.assets?.find((asset) => asset.id === assetId);
+    setProjects((current) => {
+      return copyProjectAsset(current, activeProjectId, assetId, { makeId }).projects;
+    });
+    setStatus(sourceAsset ? `Duplicated ${sourceAsset.name}` : 'Could not duplicate saved asset');
+  }
+
+  function toggleCompareAsset(assetId) {
+    setCompareAssetIds((current) => {
+      if (current.includes(assetId)) return current.filter((id) => id !== assetId);
+      return [...current.slice(-1), assetId];
+    });
   }
 
   function saveCurrentAssetToProject() {
@@ -1720,6 +1755,11 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             onSaveAsset={saveCurrentAssetToProject}
             onLoadAsset={loadProjectAsset}
             onDeleteAsset={deleteProjectAsset}
+            onRenameAsset={renameSavedAsset}
+            onDuplicateAsset={duplicateSavedAsset}
+            onToggleCompareAsset={toggleCompareAsset}
+            compareAssetIds={compareAssetIds}
+            assetComparison={assetComparison}
             onExportProject={exportActiveProject}
             onImportProject={importProjectBundle}
           />
@@ -2300,6 +2340,11 @@ function ProjectLibraryPanel({
   onSaveAsset,
   onLoadAsset,
   onDeleteAsset,
+  onRenameAsset,
+  onDuplicateAsset,
+  onToggleCompareAsset,
+  compareAssetIds,
+  assetComparison,
   onExportProject,
   onImportProject,
 }) {
@@ -2353,14 +2398,80 @@ function ProjectLibraryPanel({
                   <em>{asset.sheet?.columns ?? 1}x{asset.sheet?.rows ?? 1} - {asset.sheet?.frameWidth ?? '-'}px</em>
                 </span>
               </button>
-              <button type="button" className="project-asset-delete" title={`Delete ${asset.name}`} onClick={() => onDeleteAsset(asset.id)}>x</button>
+              <ProjectAssetNameField asset={asset} onRenameAsset={onRenameAsset} />
+              <div className="project-asset-tools">
+                <label className="project-asset-compare" title={`Compare ${asset.name}`}>
+                  <input
+                    type="checkbox"
+                    checked={compareAssetIds.includes(asset.id)}
+                    onChange={() => onToggleCompareAsset(asset.id)}
+                  />
+                  <GitCompare size={13} />
+                </label>
+                <button type="button" title={`Duplicate ${asset.name}`} onClick={() => onDuplicateAsset(asset.id)}><Copy size={13} /></button>
+                <button type="button" className="project-asset-delete" title={`Delete ${asset.name}`} onClick={() => onDeleteAsset(asset.id)}><X size={13} /></button>
+              </div>
             </div>
           ))
         ) : (
           <p>Save cleaned batches and source generations here while building a final sheet.</p>
         )}
       </div>
+      {assetComparison && (
+        <div className="project-compare-card">
+          <strong>Compare Saved Assets</strong>
+          <div>
+            <span>Name</span><em>{assetComparison.names[0]}</em><em>{assetComparison.names[1]}</em>
+            <span>Grid</span><em>{assetComparison.grid[0]}</em><em>{assetComparison.grid[1]}</em>
+            <span>Frame</span><em>{assetComparison.frameSize[0]}</em><em>{assetComparison.frameSize[1]}</em>
+            <span>Animations</span><em>{assetComparison.animations[0]}</em><em>{assetComparison.animations[1]}</em>
+            <span>Source</span><em>{assetComparison.sourceSize[0]}</em><em>{assetComparison.sourceSize[1]}</em>
+          </div>
+        </div>
+      )}
     </section>
+  );
+}
+
+function ProjectAssetNameField({ asset, onRenameAsset }) {
+  const [draftName, setDraftName] = useState(asset.name ?? '');
+  const skipNextBlurCommitRef = useRef(false);
+
+  useEffect(() => {
+    setDraftName(asset.name ?? '');
+  }, [asset.name]);
+
+  function commitName(nextName = draftName) {
+    const cleanName = nextName.trim();
+    if (cleanName && cleanName !== asset.name) {
+      onRenameAsset(asset.id, cleanName);
+      setDraftName(cleanName);
+    } else {
+      setDraftName(asset.name ?? '');
+    }
+  }
+
+  return (
+    <input
+      className="project-asset-name"
+      value={draftName}
+      aria-label={`Rename ${asset.name}`}
+      onChange={(event) => setDraftName(event.target.value)}
+      onBlur={(event) => {
+        if (skipNextBlurCommitRef.current) {
+          skipNextBlurCommitRef.current = false;
+          return;
+        }
+        commitName(event.currentTarget.value);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          skipNextBlurCommitRef.current = true;
+          commitName(event.currentTarget.value);
+          event.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 

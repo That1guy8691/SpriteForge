@@ -1450,11 +1450,16 @@ button {
 
 .project-asset-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
+  padding: 6px;
+  border: 1px solid #d5dee7;
+  border-radius: 7px;
+  background: #ffffff;
 }
 
-.project-asset-list button {
+.project-asset-list button,
+.project-asset-name {
   min-width: 0;
 }
 
@@ -1463,33 +1468,66 @@ button {
   grid-template-columns: 34px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
-  min-height: 42px;
-  padding: 6px;
-  border: 1px solid #d5dee7;
-  border-radius: 7px;
-  background: #ffffff;
+  min-height: 38px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #1f2933;
   cursor: pointer;
   text-align: left;
 }
 
-.project-asset-delete {
+.project-asset-name {
+  grid-column: 1 / -1;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid #d4dde5;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #1f2933;
+  font-size: 11px;
+}
+
+.project-asset-tools {
+  display: grid;
+  grid-template-columns: repeat(3, 28px);
+  gap: 4px;
+}
+
+.project-asset-tools button,
+.project-asset-compare {
   display: grid;
   place-items: center;
-  min-height: 42px;
+  width: 28px;
+  height: 28px;
   border: 1px solid #d5dee7;
-  border-radius: 7px;
+  border-radius: 6px;
   background: #ffffff;
-  color: #9f2f2b;
+  color: #344151;
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 850;
+}
+
+.project-asset-compare input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-asset-compare:has(input:checked) {
+  border-color: #0e8992;
+  background: #eefafb;
+  color: #0e8992;
+}
+
+.project-asset-delete {
+  color: #9f2f2b;
 }
 
 .project-asset-load:hover,
-.project-asset-delete:hover {
+.project-asset-tools button:hover,
+.project-asset-compare:hover {
   border-color: #0e8992;
-  background: #eefafb;
+  color: #0e8992;
 }
 
 .project-asset-thumb {
@@ -1521,6 +1559,48 @@ button {
   color: #73808c;
   font-size: 11px;
   font-style: normal;
+}
+
+.project-compare-card {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid #d5dee7;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.project-compare-card strong {
+  color: #22303d;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.project-compare-card div {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 5px 7px;
+  align-items: center;
+}
+
+.project-compare-card span,
+.project-compare-card em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.project-compare-card span {
+  color: #647180;
+  font-weight: 800;
+}
+
+.project-compare-card em {
+  color: #22303d;
 }
 
 .import-analysis-card {
@@ -2468,6 +2548,11 @@ button {
 .theme-dark .project-library-card,
 .theme-dark .project-library-card select,
 .theme-dark .project-library-card > input,
+.theme-dark .project-asset-row,
+.theme-dark .project-asset-name,
+.theme-dark .project-asset-tools button,
+.theme-dark .project-asset-compare,
+.theme-dark .project-compare-card,
 .theme-dark .project-actions button,
 .theme-dark .project-asset-list button,
 .theme-dark .drop-zone,
@@ -2622,6 +2707,8 @@ button {
 .theme-dark .panel-title,
 .theme-dark .project-library-head strong,
 .theme-dark .project-asset-list strong,
+.theme-dark .project-compare-card strong,
+.theme-dark .project-compare-card em,
 .theme-dark .import-analysis-head strong,
 .theme-dark .analysis-stats strong,
 .theme-dark .ignored-colors strong,
@@ -2657,6 +2744,7 @@ button {
 .theme-dark .project-library-head span,
 .theme-dark .project-asset-list p,
 .theme-dark .project-asset-list em,
+.theme-dark .project-compare-card span,
 .theme-dark .import-analysis-card p,
 .theme-dark .analysis-stats span,
 .theme-dark .ignored-colors > span,
