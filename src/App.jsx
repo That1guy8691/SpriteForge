@@ -60,6 +60,11 @@ import {
 } from './lib/layout.js';
 import { removeColorFromCanvas as clearColorFromCanvas } from './lib/exporters.js';
 import {
+  buildMetadataExport,
+  createMetadataContext,
+  EXPORT_PRESETS,
+} from './lib/metadataExport.js';
+import {
   createProjectBundle,
   loadStoredProjects,
   parseProjectBundleText,
@@ -276,6 +281,7 @@ function App() {
   const [normalizeExport, setNormalizeExport] = useState(false);
   const [exportFrameWidth, setExportFrameWidth] = useState(DEFAULT_FRAME);
   const [exportFrameHeight, setExportFrameHeight] = useState(DEFAULT_FRAME);
+  const [metadataPresetId, setMetadataPresetId] = useState(EXPORT_PRESETS[0].id);
   const [removeKeyBackground, setRemoveKeyBackground] = useState(true);
   const [keyColor, setKeyColor] = useState('#ff00ff');
   const [keyTolerance, setKeyTolerance] = useState(12);
@@ -1355,38 +1361,27 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
   }
 
   function exportMetadata() {
-    const payload = {
-      app: 'SpriteForge Studio',
-      source: source?.name ?? 'unknown',
-      frame: { width: frameWidth, height: frameHeight, padding },
-      exportFrame: {
-        normalized: normalizeExport,
-        width: normalizeExport ? exportFrameWidth : frameWidth,
-        height: normalizeExport ? exportFrameHeight : frameHeight,
-      },
-      backgroundRemoval: {
-        enabled: removeKeyBackground,
-        keyColor,
-        tolerance: keyTolerance,
-      },
-      grid: { columns, rows, totalFrames },
+    const context = createMetadataContext({
+      source,
+      frameWidth,
+      frameHeight,
+      padding,
+      normalizeExport,
+      exportFrameWidth,
+      exportFrameHeight,
+      removeKeyBackground,
+      keyColor,
+      keyTolerance,
+      columns,
+      rows,
+      totalFrames,
       pivot,
       offsets,
-      animations: animations.map((animation) => ({
-        name: animation.name,
-        start: animation.start,
-        end: animation.end,
-        frames: Array.from({ length: animation.end - animation.start + 1 }, (_, index) => animation.start + index),
-        fps: animation.fps,
-        loop: animation.loop,
-      })),
-      engineHints: {
-        godot: 'Use frame width/height for SpriteFrames or AnimatedSprite2D. Pivot maps to centered offset during import.',
-        unity: 'Use Sprite Mode Multiple, Pixels Per Unit matching frame size, then slice by grid cell size.',
-      },
-    };
-    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'spriteforge_metadata.json');
-    setStatus('Exported JSON metadata');
+      animations,
+    });
+    const { preset, filename, payload } = buildMetadataExport(context, metadataPresetId);
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), filename);
+    setStatus(`Exported ${preset.label} metadata`);
   }
 
   async function copyPromptGuide() {
@@ -1957,6 +1952,14 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           </div>
 
           <PanelTitle label="Export" />
+          <label className="export-preset-field">
+            <span>Metadata Preset</span>
+            <select value={metadataPresetId} onChange={(event) => setMetadataPresetId(event.target.value)}>
+              {EXPORT_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>{preset.label}</option>
+              ))}
+            </select>
+          </label>
           <NumberField label="Padding" value={padding} min={0} max={16} onChange={setPadding} suffix="px" />
           <label className="toggle-row export-toggle">
             <span>Normalize frame size</span>
@@ -1980,7 +1983,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           </div>
           <button className="secondary-action" onClick={pickSelectedFrameCornerColor}>Pick Selected Corner Color</button>
           <button className="primary-action" onClick={exportSpriteSheet}><Download size={18} />Export Selected Animation</button>
-          <button className="secondary-action" onClick={exportMetadata}><FileJson size={18} />Export JSON Metadata</button>
+          <button className="secondary-action" onClick={exportMetadata}><FileJson size={18} />Export Preset Metadata</button>
           <button className="secondary-action danger" onClick={() => {
             const remainingAnimations = animations.filter((animation) => animation.id !== selectedAnimation.id);
             setAnimations(remainingAnimations);
