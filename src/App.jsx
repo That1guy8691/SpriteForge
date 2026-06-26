@@ -59,11 +59,16 @@ import {
   singleFrameAnimation,
 } from './lib/layout.js';
 import { removeColorFromCanvas as clearColorFromCanvas } from './lib/exporters.js';
+import {
+  createProjectBundle,
+  loadStoredProjects,
+  parseProjectBundleText,
+  saveStoredProjects,
+} from './lib/projectStorage.js';
 import { scoreSilhouetteFrames } from './lib/rotationAnalysis.js';
 
 const DEFAULT_FRAME = 32;
 const MAX_FRAME_SIZE = 2048;
-const PROJECT_STORAGE_KEY = 'spriteforge.projects.v1';
 const COMMON_FRAME_SIZES = [16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512];
 
 const initialAnimations = [
@@ -181,25 +186,6 @@ function makeId(prefix = 'id') {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function loadStoredProjects() {
-  if (typeof window === 'undefined') return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveStoredProjects(projects) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(projects));
-  } catch {
-    // Project bundles can become large because source images are stored as data URLs.
-  }
-}
-
 function createProject(name = 'SpriteForge Project') {
   const now = new Date().toISOString();
   return {
@@ -306,7 +292,8 @@ function App() {
   const [filledSheet, setFilledSheet] = useState(null);
   const [importAnalysis, setImportAnalysis] = useState(null);
   const [showDetectionOverlay, setShowDetectionOverlay] = useState(true);
-  const [projects, setProjects] = useState(() => loadStoredProjects());
+  const [projects, setProjects] = useState([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [projectNameDraft, setProjectNameDraft] = useState('SpriteForge Project');
   const [activeChainStepId, setActiveChainStepId] = useState('design-lock');
@@ -609,8 +596,30 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
   }, []);
 
   useEffect(() => {
-    saveStoredProjects(projects);
-  }, [projects]);
+    let cancelled = false;
+    loadStoredProjects()
+      .then((storedProjects) => {
+        if (cancelled) return;
+        setProjects(storedProjects);
+        setProjectsLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProjects([]);
+        setProjectsLoaded(true);
+        setStatus('Project library storage could not be loaded');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!projectsLoaded) return;
+    saveStoredProjects(projects).catch(() => {
+      setStatus('Project library storage could not be saved');
+    });
+  }, [projects, projectsLoaded]);
 
   useEffect(() => {
     if (activeProjectId) return;
@@ -1619,12 +1628,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       setStatus('Create or select a project before exporting');
       return;
     }
-    const payload = {
-      app: 'SpriteForge Project Bundle',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      project,
-    };
+    const payload = createProjectBundle(project);
     const filename = `${project.name.replace(/[^a-z0-9-_]+/gi, '_').toLowerCase() || 'spriteforge_project'}.json`;
     downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), filename);
     setStatus(`Exported project ${project.name}`);
@@ -1634,9 +1638,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     if (!file) return;
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text);
-      const project = parsed.project ?? parsed;
-      if (!project?.id || !Array.isArray(project.assets)) throw new Error('Invalid SpriteForge project file.');
+      const project = parseProjectBundleText(text);
       const importedProject = {
         ...project,
         id: makeId('project'),
