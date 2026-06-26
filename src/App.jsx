@@ -68,6 +68,7 @@ import {
 } from './lib/metadataExport.js';
 import {
   createProjectExportZip,
+  parseProjectExportZipBlob,
   sanitizeExportName,
 } from './lib/projectExport.js';
 import {
@@ -1687,8 +1688,10 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
   async function importProjectBundle(file) {
     if (!file) return;
     try {
-      const text = await file.text();
-      const project = parseProjectBundleText(text);
+      const isZipFile = file.name?.toLowerCase().endsWith('.zip') || file.type === 'application/zip';
+      const project = isZipFile
+        ? await parseProjectExportZipBlob(file)
+        : parseProjectBundleText(await file.text());
       const importedProject = {
         ...project,
         id: makeId('project'),
@@ -1700,7 +1703,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       setProjectNameDraft(importedProject.name);
       setStatus(`Imported project ${importedProject.name}`);
     } catch (error) {
-      setStatus(error.message || 'Could not import project JSON');
+      setStatus(error.message || 'Could not import project file');
     }
   }
 
@@ -2403,7 +2406,7 @@ function ProjectLibraryPanel({
         <input
           ref={projectFileInputRef}
           type="file"
-          accept="application/json,.json"
+          accept="application/json,application/zip,.json,.zip"
           onChange={(event) => {
             onImportProject(event.target.files?.[0]);
             event.target.value = '';

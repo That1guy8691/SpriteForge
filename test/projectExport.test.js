@@ -3,8 +3,10 @@ import test from 'node:test';
 import {
   buildProjectExportEntries,
   createProjectExportZip,
+  parseProjectExportZipBlob,
   sanitizeExportName,
 } from '../src/lib/projectExport.js';
+import { readStoredZipEntries } from '../src/lib/zipArchive.js';
 
 const tinyPngDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lh6O5wAAAABJRU5ErkJggg==';
 
@@ -43,33 +45,6 @@ function sampleProject() {
   };
 }
 
-async function zipEntryNames(blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  const decoder = new TextDecoder();
-  const names = [];
-  let offset = 0;
-
-  while (offset < bytes.length) {
-    const signature = bytes[offset]
-      | (bytes[offset + 1] << 8)
-      | (bytes[offset + 2] << 16)
-      | (bytes[offset + 3] << 24);
-    if (signature !== 0x04034b50) break;
-
-    const compressedSize = bytes[offset + 18]
-      | (bytes[offset + 19] << 8)
-      | (bytes[offset + 20] << 16)
-      | (bytes[offset + 21] << 24);
-    const nameLength = bytes[offset + 26] | (bytes[offset + 27] << 8);
-    const extraLength = bytes[offset + 28] | (bytes[offset + 29] << 8);
-    const nameStart = offset + 30;
-    names.push(decoder.decode(bytes.slice(nameStart, nameStart + nameLength)));
-    offset = nameStart + nameLength + extraLength + compressedSize;
-  }
-
-  return names;
-}
-
 test('sanitizes export names for stable filenames', () => {
   assert.equal(sanitizeExportName('Knight Sheet!.png'), 'knight_sheet');
   assert.equal(sanitizeExportName('   '), 'spriteforge');
@@ -92,9 +67,21 @@ test('creates a readable zip archive for project exports', async () => {
   const zip = await createProjectExportZip(sampleProject());
   assert.equal(zip.type, 'application/zip');
 
-  const names = await zipEntryNames(zip);
+  const names = readStoredZipEntries(await zip.arrayBuffer()).map((entry) => entry.name);
   assert.ok(names.includes('README.txt'));
   assert.ok(names.includes('project.json'));
   assert.ok(names.includes('assets/hero_idle/hero_idle.png'));
   assert.ok(names.includes('assets/hero_idle/metadata/unity.json'));
+});
+
+test('parses a SpriteForge project back from an exported zip bundle', async () => {
+  const project = sampleProject();
+  const zip = await createProjectExportZip(project);
+  const importedProject = await parseProjectExportZipBlob(zip);
+
+  assert.equal(importedProject.id, project.id);
+  assert.equal(importedProject.name, project.name);
+  assert.equal(importedProject.assets.length, 1);
+  assert.equal(importedProject.assets[0].name, 'Hero Idle.png');
+  assert.equal(importedProject.assets[0].source.url, tinyPngDataUrl);
 });

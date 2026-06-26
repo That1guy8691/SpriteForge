@@ -1,6 +1,6 @@
 import { buildMetadataExport, createMetadataContext, EXPORT_PRESETS } from './metadataExport.js';
-import { createProjectBundle } from './projectStorage.js';
-import { createZipBlob } from './zipArchive.js';
+import { createProjectBundle, parseProjectBundleText } from './projectStorage.js';
+import { createZipBlob, readStoredZipEntries } from './zipArchive.js';
 
 const DATA_URL_PATTERN = /^data:([^;,]+)?(;base64)?,(.*)$/;
 
@@ -135,4 +135,13 @@ export async function buildProjectExportEntries(project) {
 export async function createProjectExportZip(project) {
   const entries = await buildProjectExportEntries(project);
   return createZipBlob(entries);
+}
+
+export async function parseProjectExportZipBlob(blob) {
+  const entries = readStoredZipEntries(await blob.arrayBuffer());
+  const projectEntry = entries.find((entry) => entry.name === 'project.json');
+  if (!projectEntry) {
+    throw new Error('ZIP bundle is missing project.json.');
+  }
+  return parseProjectBundleText(new TextDecoder().decode(projectEntry.content));
 }

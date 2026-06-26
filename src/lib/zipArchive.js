@@ -1,5 +1,6 @@
 const ZIP_EPOCH = new Date('1980-01-01T00:00:00Z');
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 let crcTable = null;
 
@@ -47,6 +48,17 @@ function writeUint32(bytes, offset, value) {
   bytes[offset + 1] = (value >>> 8) & 0xff;
   bytes[offset + 2] = (value >>> 16) & 0xff;
   bytes[offset + 3] = (value >>> 24) & 0xff;
+}
+
+function readUint16(bytes, offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readUint32(bytes, offset) {
+  return (bytes[offset]
+    | (bytes[offset + 1] << 8)
+    | (bytes[offset + 2] << 16)
+    | (bytes[offset + 3] << 24)) >>> 0;
 }
 
 function concatBytes(parts) {
@@ -140,4 +152,50 @@ export function createZipArchive(entries, date = new Date()) {
 
 export function createZipBlob(entries, date = new Date()) {
   return new Blob([createZipArchive(entries, date)], { type: 'application/zip' });
+}
+
+export function readStoredZipEntries(input) {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  const entries = [];
+  let offset = 0;
+
+  while (offset + 30 <= bytes.length) {
+    const signature = readUint32(bytes, offset);
+    if (signature === 0x02014b50 || signature === 0x06054b50) break;
+    if (signature !== 0x04034b50) {
+      throw new Error('Invalid ZIP archive.');
+    }
+
+    const flags = readUint16(bytes, offset + 6);
+    const method = readUint16(bytes, offset + 8);
+    const storedChecksum = readUint32(bytes, offset + 14);
+    const compressedSize = readUint32(bytes, offset + 18);
+    const uncompressedSize = readUint32(bytes, offset + 22);
+    const nameLength = readUint16(bytes, offset + 26);
+    const extraLength = readUint16(bytes, offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    const dataEnd = dataStart + compressedSize;
+
+    if (flags & 0x0008) {
+      throw new Error('ZIP data descriptors are not supported.');
+    }
+    if (method !== 0) {
+      throw new Error('Only stored ZIP entries are supported.');
+    }
+    if (dataEnd > bytes.length || compressedSize !== uncompressedSize) {
+      throw new Error('Invalid ZIP entry size.');
+    }
+
+    const name = textDecoder.decode(bytes.slice(nameStart, nameStart + nameLength));
+    const content = bytes.slice(dataStart, dataEnd);
+    if (crc32(content) !== storedChecksum) {
+      throw new Error(`ZIP checksum mismatch for ${name}.`);
+    }
+    entries.push({ name: normalizeEntryName(name), content });
+    offset = dataEnd;
+  }
+
+  if (!entries.length) throw new Error('ZIP archive did not contain readable files.');
+  return entries;
 }
