@@ -72,6 +72,11 @@ import {
   sanitizeExportName,
 } from './lib/projectExport.js';
 import {
+  analyzeProject,
+  formatBytes,
+  formatCompactNumber,
+} from './lib/projectMetrics.js';
+import {
   compareProjectAssets,
   deleteProjectAsset as removeProjectAsset,
   duplicateProjectAsset as copyProjectAsset,
@@ -349,6 +354,10 @@ function App() {
     [activeProject, compareAssetIds]
   );
   const assetComparison = compareAssets.length === 2 ? compareProjectAssets(compareAssets[0], compareAssets[1]) : null;
+  const activeProjectMetrics = useMemo(
+    () => analyzeProject(activeProject),
+    [activeProject]
+  );
 
   const promptMetrics = useMemo(() => {
     const framePixels = Math.max(1, Number(promptConfig.frameSize) || 64);
@@ -1783,6 +1792,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             onToggleCompareAsset={toggleCompareAsset}
             compareAssetIds={compareAssetIds}
             assetComparison={assetComparison}
+            projectMetrics={activeProjectMetrics}
             onExportProject={exportActiveProject}
             onExportProjectZip={exportActiveProjectZip}
             onImportProject={importProjectBundle}
@@ -2369,6 +2379,7 @@ function ProjectLibraryPanel({
   onToggleCompareAsset,
   compareAssetIds,
   assetComparison,
+  projectMetrics,
   onExportProject,
   onExportProjectZip,
   onImportProject,
@@ -2455,7 +2466,47 @@ function ProjectLibraryPanel({
           </div>
         </div>
       )}
+      {assets.length > 0 && (
+        <ProjectOptimizationReport metrics={projectMetrics} />
+      )}
     </section>
+  );
+}
+
+function ProjectOptimizationReport({ metrics }) {
+  const topAssets = metrics.assets.slice(0, 3);
+  const visibleOpportunities = metrics.opportunities.slice(0, 5);
+
+  return (
+    <div className="project-optimization-card">
+      <strong>Optimization Report</strong>
+      <div className="project-metric-grid">
+        <span>Assets</span><em>{metrics.assetCount}</em>
+        <span>Frames</span><em>{formatCompactNumber(metrics.totals.frames)}</em>
+        <span>Source px</span><em>{formatCompactNumber(metrics.totals.sourcePixels)}</em>
+        <span>Export px</span><em>{formatCompactNumber(metrics.totals.exportPixels)}</em>
+        <span>Embedded</span><em>{formatBytes(metrics.totals.sourceBytes)}</em>
+        <span>Unassigned</span><em>{metrics.totals.unanimatedFrames}</em>
+      </div>
+      {visibleOpportunities.length > 0 && (
+        <ul className="project-opportunity-list">
+          {visibleOpportunities.map((item) => (
+            <li key={`${item.asset}-${item.label}`}>
+              <span>{item.asset}</span>
+              <em>{item.label}</em>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="project-metric-assets">
+        {topAssets.map((asset) => (
+          <div key={asset.id}>
+            <span>{asset.name}</span>
+            <em>{asset.gridSize} - {asset.frameSize} - {formatCompactNumber(asset.exportPixels)} export px</em>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
