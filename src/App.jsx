@@ -1962,7 +1962,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           </label>
 
           <div className="source-card">
-            <div className="tiny-sprite" style={{ backgroundImage: `url(${source?.url})` }} />
+            <div className="tiny-sprite" style={{ backgroundImage: source?.url ? `url(${source.url})` : 'none' }} />
             <div>
               <strong>{source?.name ?? 'No image'}</strong>
               <span>{source ? `${source.width}x${source.height}` : 'Waiting for import'}</span>
@@ -2671,7 +2671,7 @@ function ProjectLibraryPanel({
           assets.slice(0, 8).map((asset) => (
             <div key={asset.id} className="project-asset-row">
               <button type="button" className="project-asset-load" onClick={() => onLoadAsset(asset)}>
-                <span className="project-asset-thumb" style={{ backgroundImage: `url(${asset.source?.url})` }} />
+                <span className="project-asset-thumb" style={{ backgroundImage: asset.source?.url ? `url(${asset.source.url})` : 'none' }} />
                 <span>
                   <strong>{asset.name}</strong>
                   <em>{asset.sheet?.columns ?? 1}x{asset.sheet?.rows ?? 1} - {asset.sheet?.frameWidth ?? '-'}px</em>
@@ -2955,7 +2955,7 @@ function RotationCleanup({
           Use this for AI rotation sheets where every frame is the same cell size but the ship, character, or object drifts around inside the cells.
         </p>
         <div className="rotation-source">
-          <div className="tiny-sprite" style={{ backgroundImage: `url(${source?.url})` }} />
+          <div className="tiny-sprite" style={{ backgroundImage: source?.url ? `url(${source.url})` : 'none' }} />
           <div>
             <strong>{source?.name ?? 'No image loaded'}</strong>
             <span>{columns}x{rows} grid, {frameWidth}x{frameHeight}px frames</span>
