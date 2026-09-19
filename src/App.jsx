@@ -1,7 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignCenter,
-  BookOpen,
   Check,
   ClipboardCopy,
   Copy,
@@ -11,6 +10,7 @@ import {
   GitCompare,
   Grid3X3,
   ImagePlus,
+  Maximize2,
   Minus,
   Moon,
   Pause,
@@ -22,6 +22,7 @@ import {
   SkipBack,
   SkipForward,
   Sparkles,
+  StretchHorizontal,
   Sun,
   Trash2,
   X,
@@ -61,6 +62,7 @@ import {
   singleFrameAnimation,
 } from './lib/layout.js';
 import { removeColorFromCanvas as clearColorFromCanvas } from './lib/exporters.js';
+import { swapFrameOffsets } from './lib/frameSwap.js';
 import {
   buildMetadataExport,
   createMetadataContext,
@@ -88,11 +90,19 @@ import {
   parseProjectBundleText,
   saveStoredProjects,
 } from './lib/projectStorage.js';
-import { scoreSilhouetteFrames } from './lib/rotationAnalysis.js';
+import {
+  buildPivotStabilizationOffsets,
+  scoreSilhouetteFrames,
+} from './lib/rotationAnalysis.js';
+import { createDemoSheet } from './lib/demoSheet.js';
+import { recommendedInitialZoom } from './lib/viewport.js';
 
 const DEFAULT_FRAME = 32;
 const MAX_FRAME_SIZE = 2048;
 const COMMON_FRAME_SIZES = [16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512];
+const FRAME_DRAG_TYPE = 'application/x-spriteforge-frame';
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 8;
 
 const initialAnimations = [
   { id: 'idle', name: 'idle', start: 0, end: 3, fps: 6, loop: true },
@@ -113,81 +123,6 @@ function downloadBlob(blob, filename) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(link.href), 1500);
-}
-
-function createDemoSheet() {
-  const frame = DEFAULT_FRAME;
-  const cols = 8;
-  const rows = 3;
-  const canvas = document.createElement('canvas');
-  canvas.width = cols * frame;
-  canvas.height = rows * frame;
-  const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const palette = ['#18202a', '#2b3f55', '#126c72', '#43a6a5', '#70422b', '#a76b43', '#e6b77e', '#f6d8a9', '#d9edf0', '#f0a83b'];
-
-  for (let i = 0; i < cols * rows; i += 1) {
-    const ox = (i % cols) * frame;
-    const oy = Math.floor(i / cols) * frame;
-    const stride = i % 4;
-    const attack = i >= 12 && i <= 17;
-    const hurt = i >= 18 && i <= 19;
-    const bob = stride === 1 || stride === 3 ? -1 : 0;
-    const arm = attack ? Math.min(5, i - 11) : stride - 1;
-    const legA = stride === 1 ? -2 : stride === 3 ? 2 : 0;
-    const legB = -legA;
-    const faceX = hurt ? -1 : attack ? 1 : 0;
-
-    ctx.fillStyle = palette[0];
-    ctx.fillRect(ox + 13, oy + 7 + bob, 8, 8);
-    ctx.fillRect(ox + 11, oy + 15 + bob, 12, 10);
-    ctx.fillRect(ox + 9 + legA, oy + 25, 6, 4);
-    ctx.fillRect(ox + 18 + legB, oy + 25, 6, 4);
-
-    ctx.fillStyle = palette[7];
-    ctx.fillRect(ox + 14, oy + 8 + bob, 6, 6);
-    ctx.fillRect(ox + 13, oy + 13 + bob, 8, 2);
-
-    ctx.fillStyle = palette[4];
-    ctx.fillRect(ox + 12, oy + 5 + bob, 10, 5);
-    ctx.fillRect(ox + 11, oy + 8 + bob, 3, 5);
-    ctx.fillRect(ox + 20, oy + 8 + bob, 2, 4);
-
-    ctx.fillStyle = palette[2];
-    ctx.fillRect(ox + 12, oy + 16 + bob, 10, 7);
-    ctx.fillRect(ox + 10, oy + 18 + bob, 3, 5);
-    ctx.fillRect(ox + 21, oy + 18 + bob, 3, 5);
-
-    ctx.fillStyle = palette[8];
-    ctx.fillRect(ox + 16 + faceX, oy + 11 + bob, 1, 1);
-    ctx.fillRect(ox + 20, oy + 16 + bob, 3, 4);
-
-    ctx.fillStyle = palette[9];
-    ctx.fillRect(ox + 10 + legA, oy + 25, 4, 2);
-    ctx.fillRect(ox + 19 + legB, oy + 25, 4, 2);
-
-    ctx.fillStyle = palette[1];
-    ctx.fillRect(ox + 23 + arm, oy + 18 + bob, 4, 2);
-    ctx.fillRect(ox + 25 + arm, oy + 17 + bob, 2, 1);
-
-    if (attack) {
-      ctx.fillStyle = '#d9fbff';
-      ctx.fillRect(ox + 26 + arm, oy + 15 + bob, 4, 1);
-      ctx.fillRect(ox + 29 + arm, oy + 14 + bob, 1, 3);
-      ctx.fillStyle = '#6ed4df';
-      ctx.fillRect(ox + 25, oy + 22, 5, 1);
-      ctx.fillRect(ox + 27, oy + 23, 3, 1);
-    }
-  }
-
-  return {
-    name: 'demo_knight_32.png',
-    url: canvas.toDataURL('image/png'),
-    width: canvas.width,
-    height: canvas.height,
-  };
 }
 
 function readImageFile(file) {
@@ -306,7 +241,6 @@ function App() {
   const [pivot, setPivot] = useState({ x: 16, y: 28 });
   const [offsets, setOffsets] = useState({});
   const [status, setStatus] = useState('Ready');
-  const [guideOpen, setGuideOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [promptConfig, setPromptConfig] = useState(() => createPromptConfig());
   const [formatManualOpen, setFormatManualOpen] = useState(false);
@@ -316,6 +250,8 @@ function App() {
   const [filledSheet, setFilledSheet] = useState(null);
   const [importAnalysis, setImportAnalysis] = useState(null);
   const [showDetectionOverlay, setShowDetectionOverlay] = useState(true);
+  const [dragFrame, setDragFrame] = useState(null);
+  const [dropTargetFrame, setDropTargetFrame] = useState(null);
   const [projects, setProjects] = useState([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState(null);
@@ -324,9 +260,11 @@ function App() {
   const [activeChainStepId, setActiveChainStepId] = useState('design-lock');
   const imageRef = useRef(null);
   const previewCanvasRef = useRef(null);
+  const canvasWrapRef = useRef(null);
   const fileInputRef = useRef(null);
   const projectFileInputRef = useRef(null);
   const sourceUrlRef = useRef(null);
+  const preserveNextSourceStateRef = useRef(false);
 
   const activePromptChoices = useMemo(() => ({
     ...defaultPromptChoices,
@@ -714,6 +652,14 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       const isNewSource = sourceUrlRef.current !== source.url;
       sourceUrlRef.current = source.url;
       if (isNewSource) {
+        const preserveFrameState = preserveNextSourceStateRef.current;
+        preserveNextSourceStateRef.current = false;
+        if (preserveFrameState) {
+          setImportAnalysis(null);
+          setFilledSheet(null);
+          requestAnimationFrame(drawPreview);
+          return;
+        }
         const analysis = analyzeImportImage(image);
         setImportAnalysis(analysis);
         setSelectedFrame(0);
@@ -760,7 +706,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           setPromptConfig((current) => ({ ...current, backgroundMode: 'key', keyColor: analysis.keyColor }));
           setRemoveKeyBackground(true);
         }
-        setZoom(Math.max(image.width, image.height) > 900 ? 0.75 : 1);
+        setZoom(recommendedInitialZoom(image.width, image.height));
         setStatus(
           shouldAutoApply
             ? `${source.name} auto-applied ${bestGridSuggestion.columns}x${bestGridSuggestion.rows} grid and ${inferAnimationsForLayout(bestGridSuggestion, analysis.detectedSprites).length} detected range(s).`
@@ -846,6 +792,105 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     };
   }
 
+  function copyFrameCell(sourceCanvas, rect) {
+    const cellCanvas = document.createElement('canvas');
+    cellCanvas.width = rect.sw;
+    cellCanvas.height = rect.sh;
+    const cellCtx = cellCanvas.getContext('2d');
+    cellCtx.imageSmoothingEnabled = false;
+    cellCtx.drawImage(sourceCanvas, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, rect.sw, rect.sh);
+    return cellCanvas;
+  }
+
+  function swapFrameCells(frameA, frameB) {
+    const image = imageRef.current;
+    const firstFrame = Number(frameA);
+    const secondFrame = Number(frameB);
+    if (!source || !image || !Number.isInteger(firstFrame) || !Number.isInteger(secondFrame)) return;
+    if (firstFrame < 0 || secondFrame < 0 || firstFrame >= totalFrames || secondFrame >= totalFrames) return;
+    if (firstFrame === secondFrame) {
+      setSelectedFrame(firstFrame);
+      setStatus(`Frame ${firstFrame} is already in that slot`);
+      return;
+    }
+
+    const rectA = frameRect(firstFrame);
+    const rectB = frameRect(secondFrame);
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(image, 0, 0);
+
+    const cellA = copyFrameCell(canvas, rectA);
+    const cellB = copyFrameCell(canvas, rectB);
+    ctx.clearRect(rectA.sx, rectA.sy, rectA.sw, rectA.sh);
+    ctx.clearRect(rectB.sx, rectB.sy, rectB.sw, rectB.sh);
+    ctx.drawImage(cellB, rectA.sx, rectA.sy);
+    ctx.drawImage(cellA, rectB.sx, rectB.sy);
+
+    const nextUrl = canvas.toDataURL('image/png');
+    preserveNextSourceStateRef.current = true;
+    setSource((current) => {
+      if (!current) return current;
+      const baseName = (current.name || 'spriteforge')
+        .replace(/_reordered(?=\.[^.]+$|$)/, '')
+        .replace(/\.[^.]+$/, '');
+      return {
+        ...current,
+        name: `${baseName}_reordered.png`,
+        url: nextUrl,
+        width: canvas.width,
+        height: canvas.height,
+      };
+    });
+    setOffsets((current) => swapFrameOffsets(current, firstFrame, secondFrame));
+    setSelectedFrame(secondFrame);
+    setIsPlaying(false);
+    setRotationStats(null);
+    setFilledSheet(null);
+    setImportAnalysis(null);
+    setStatus(`Swapped frame ${firstFrame} with frame ${secondFrame}`);
+  }
+
+  function startFrameDrag(event, frame) {
+    if (!source) {
+      event.preventDefault();
+      return;
+    }
+    setIsPlaying(false);
+    setDragFrame(frame);
+    setDropTargetFrame(null);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(FRAME_DRAG_TYPE, String(frame));
+    event.dataTransfer.setData('text/plain', String(frame));
+  }
+
+  function updateFrameDropTarget(event, frame) {
+    if (!source) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTargetFrame(frame);
+  }
+
+  function handleFrameDrop(event, frame) {
+    if (!source) return;
+    event.preventDefault();
+    const rawFrame = event.dataTransfer.getData(FRAME_DRAG_TYPE) || event.dataTransfer.getData('text/plain');
+    const sourceFrame = Number(rawFrame);
+    if (Number.isInteger(sourceFrame)) {
+      swapFrameCells(sourceFrame, frame);
+    }
+    setDragFrame(null);
+    setDropTargetFrame(null);
+  }
+
+  function endFrameDrag() {
+    setDragFrame(null);
+    setDropTargetFrame(null);
+  }
+
   function drawFrame(ctx, frame, dx, dy, scale = 1, drawPivot = false) {
     const image = imageRef.current;
     if (!image) return;
@@ -899,14 +944,14 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     );
   }
 
-  function alignFeet() {
+  function applyBaselineOffsets() {
     const baseline = pivot.y;
     const nextOffsets = {};
     for (let frame = 0; frame < totalFrames; frame += 1) {
       nextOffsets[frame] = { ...(offsets[frame] ?? { x: 0, y: 0 }), y: Math.round(frameHeight - baseline - 4) };
     }
     setOffsets(nextOffsets);
-    setStatus('Applied baseline alignment offsets to all frames');
+    setStatus('Applied pivot-based baseline offsets to all frames');
   }
 
   function resetOffsets() {
@@ -1003,21 +1048,40 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       let maxX = -1;
       let maxY = -1;
       let pixels = 0;
+      let weightedX = 0;
+      let weightedY = 0;
+      let weightTotal = 0;
+      const signatureSize = 16;
+      const signatureValues = Array.from({ length: signatureSize * signatureSize }, () => 0);
+      const signatureCounts = Array.from({ length: signatureSize * signatureSize }, () => 0);
 
       for (let y = 0; y < frameHeight; y += 1) {
         for (let x = 0; x < frameWidth; x += 1) {
           const index = (y * frameWidth + x) * 4;
+          const signatureX = Math.min(signatureSize - 1, Math.floor((x / frameWidth) * signatureSize));
+          const signatureY = Math.min(signatureSize - 1, Math.floor((y / frameHeight) * signatureSize));
+          const signatureIndex = signatureY * signatureSize + signatureX;
+          signatureCounts[signatureIndex] += 1;
           if (isKeyOrTransparentPixel(data, index, targetColor)) continue;
           minX = Math.min(minX, x);
           minY = Math.min(minY, y);
           maxX = Math.max(maxX, x);
           maxY = Math.max(maxY, y);
           pixels += 1;
+          const weight = Math.max(1, data[index + 3]);
+          weightedX += x * weight;
+          weightedY += y * weight;
+          weightTotal += weight;
+          const luminance = (data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114) / 255;
+          signatureValues[signatureIndex] += (data[index + 3] / 255) * (0.35 + luminance * 0.65);
         }
       }
 
       const width = pixels ? maxX - minX + 1 : 0;
       const height = pixels ? maxY - minY + 1 : 0;
+      const centerX = pixels ? (minX + maxX) / 2 : frameWidth / 2;
+      const centerY = pixels ? (minY + maxY) / 2 : frameHeight / 2;
+      const signature = signatureValues.map((value, index) => value / Math.max(1, signatureCounts[index]));
       frames.push({
         frame,
         minX,
@@ -1027,9 +1091,12 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
         width,
         height,
         pixels,
-        centerX: pixels ? (minX + maxX) / 2 : frameWidth / 2,
-        centerY: pixels ? (minY + maxY) / 2 : frameHeight / 2,
+        centerX,
+        centerY,
+        weightedCenterX: weightTotal ? weightedX / weightTotal : centerX,
+        weightedCenterY: weightTotal ? weightedY / weightTotal : centerY,
         radius: pixels ? Math.max(width, height) / 2 : 0,
+        signature,
       });
     }
 
@@ -1067,25 +1134,19 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
   }
 
   function autoCenterRotationFrames() {
-    const stats = rotationStats;
+    const stats = rotationStats?.validCount ? rotationStats : analyzeRotationFrames();
     if (!stats?.frames?.length || !stats.validCount) {
-      analyzeRotationFrames();
-      setStatus('Analyze the sheet first, then run auto-center.');
+      setStatus('No visible rotation frames found to stabilize.');
       return;
     }
-    setOffsets((current) => {
-      const next = { ...current };
-      stats.frames.forEach((frame) => {
-        if (!frame.pixels) return;
-        const currentOffsetValue = current[frame.frame] ?? { x: 0, y: 0 };
-        next[frame.frame] = {
-          x: currentOffsetValue.x + Math.round(stats.avgX - frame.centerX),
-          y: currentOffsetValue.y + Math.round(stats.avgY - frame.centerY),
-        };
-      });
-      return next;
+    const stabilized = buildPivotStabilizationOffsets(stats.frames, {
+      targetX: pivot.x,
+      targetY: pivot.y,
     });
-    setStatus(`Auto-centered ${stats.validCount} rotation frames using silhouette centers`);
+    setOffsets(stabilized.offsets);
+    setStatus(
+      `Stabilized ${stabilized.validCount} frames to pivot ${Math.round(stabilized.targetX)},${Math.round(stabilized.targetY)}. Max shift ${stabilized.maxShift.toFixed(1)}px.`
+    );
   }
 
   function createDetectedComponentSheet(image, analysis) {
@@ -1302,6 +1363,14 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     setStatus(`Picked key color ${nextColor} from selected frame`);
   }
 
+  function usePaletteKeyColor(color) {
+    const nextColor = normalizeHexColor(color);
+    setKeyColor(nextColor);
+    setPromptConfig((current) => ({ ...current, backgroundMode: 'key', keyColor: nextColor }));
+    setRemoveKeyBackground(true);
+    setStatus(`Using ${nextColor} as the export key color`);
+  }
+
   function applySheetLayout(layoutColumns, layoutRows) {
     if (!source) return;
     const nextWidth = Math.max(1, Math.floor(source.width / layoutColumns));
@@ -1314,7 +1383,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     setSelectedAnimationId(animations[0]?.id ?? 'idle');
     setPivot({ x: Math.round(nextWidth / 2), y: Math.max(0, nextHeight - 4) });
     setOffsets({});
-    setZoom(source.width > 900 || source.height > 900 ? 0.5 : 1);
+    setZoom(recommendedInitialZoom(source.width, source.height));
     setAnimations((current) =>
       current.map((animation, index) => {
         const maxFrame = layoutColumns * layoutRows - 1;
@@ -1345,7 +1414,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     setPivot({ x: Math.round(suggestion.frameWidth / 2), y: Math.round(suggestion.frameHeight / 2) });
     setOffsets({});
     setAnimations(nextAnimations);
-    setZoom(Math.max(source?.width ?? 0, source?.height ?? 0) > 900 ? 0.75 : 1);
+    setZoom(recommendedInitialZoom(source?.width ?? 0, source?.height ?? 0));
     setStatus(`Applied ${suggestion.columns}x${suggestion.rows} layout with ${nextAnimations.length} detected range(s)`);
   }
 
@@ -1425,7 +1494,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       await navigator.clipboard.writeText(guidePrompt);
       setStatus('Copied SpriteForge image prompt');
     } catch {
-      const textarea = document.querySelector('.guide-section textarea');
+      const textarea = document.querySelector('.final-prompt-output');
       textarea?.focus();
       textarea?.select();
       const copied = document.execCommand('copy');
@@ -1497,6 +1566,23 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       setKeyColor(normalizeHexColor(value));
       setRemoveKeyBackground(true);
     }
+  }
+
+  function syncPromptFromCurrentSheet() {
+    const nextFrameSize = Math.max(8, Number(frameWidth) || DEFAULT_FRAME);
+    setPromptConfig((current) => ({
+      ...current,
+      frameSize: String(nextFrameSize),
+      columns: String(columns),
+      rows: String(rows),
+      backgroundMode: removeKeyBackground ? 'key' : 'transparent',
+      keyColor: normalizeHexColor(keyColor),
+    }));
+    setStatus(
+      frameWidth === frameHeight
+        ? `Synced Prompt Builder to ${columns}x${rows}, ${frameWidth}px frames, ${normalizeHexColor(keyColor)} key color`
+        : `Synced Prompt Builder to ${columns}x${rows}; prompts use square ${nextFrameSize}px cells from the current frame width`
+    );
   }
 
   function updateBackgroundMode(mode) {
@@ -1720,7 +1806,27 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     return ['#111827', '#2f241c', '#70422b', '#a76b43', '#f6d8a9', '#e8edf0', '#cbd5df', '#17445c', '#126c72', '#43a6a5', '#58a869', '#593451', '#e64c3f', '#f0a83b'];
   }
 
-  const displayScale = clamp(zoom, 0.25, 4);
+  function fitZoom(mode = 'sheet') {
+    const wrap = canvasWrapRef.current;
+    const naturalWidth = Math.max(1, columns * frameWidth);
+    const naturalHeight = Math.max(1, rows * frameHeight);
+    const fallbackWidth = 960;
+    const fallbackHeight = 560;
+    const availableWidth = Math.max(96, (wrap?.clientWidth ?? fallbackWidth) - 72);
+    const availableHeight = Math.max(96, (wrap?.clientHeight ?? fallbackHeight) - 72);
+    const widthZoom = availableWidth / naturalWidth;
+    const heightZoom = availableHeight / naturalHeight;
+    return clamp(mode === 'width' ? widthZoom : Math.min(widthZoom, heightZoom), MIN_ZOOM, MAX_ZOOM);
+  }
+
+  function zoomToFit(mode = 'sheet') {
+    if (!source) return;
+    const nextZoom = fitZoom(mode);
+    setZoom(nextZoom);
+    setStatus(`${mode === 'width' ? 'Fit sheet width' : 'Fit sheet'} at ${Math.round(nextZoom * 100)}%`);
+  }
+
+  const displayScale = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
   const sheetWidth = columns * frameWidth * displayScale;
   const sheetHeight = rows * frameHeight * displayScale;
 
@@ -1733,7 +1839,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
         </div>
         <div className="project-title">
           <strong>{source?.name ?? 'untitled_spritesheet.png'}</strong>
-          <span>Autosaved local session</span>
+          <span>Local project library</span>
         </div>
         <nav className="feature-tabs" aria-label="SpriteForge tools">
           <button className={activeTool === 'studio' ? 'active' : ''} onClick={() => setActiveTool('studio')}>Sprite Studio</button>
@@ -1743,7 +1849,6 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           <button className="icon-button" title="New demo sheet" onClick={() => setSource(createDemoSheet())}><Scissors size={18} /></button>
           <button className="icon-button" title="Open PNG" onClick={() => fileInputRef.current?.click()}><FolderOpen size={18} /></button>
           <button className="icon-button" title="Export selected animation PNG" onClick={exportSpriteSheet}><Save size={18} /></button>
-          <button className="icon-button" title="Prompt builder" onClick={() => setGuideOpen(true)}><BookOpen size={18} /></button>
           <button
             className="icon-button"
             title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -1858,9 +1963,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
         <section className="center-stage">
           <div className="tool-strip">
-            <button className="tool active" title="Select"><Check size={18} /></button>
-            <button className="tool" title="Grid"><Grid3X3 size={18} /></button>
-            <button className="tool" title="Align feet" onClick={alignFeet}><AlignCenter size={18} /></button>
+            <button className="tool" aria-label="Apply pivot baseline offsets" title="Apply pivot baseline offsets" onClick={applyBaselineOffsets}><AlignCenter size={18} /></button>
             <button className="tool" title="Reset offsets" onClick={resetOffsets}><RotateCcw size={18} /></button>
             <span className="strip-divider" />
             <button className="quick-action" aria-label="Auto-detect key color" title="Auto-detect the solid background key color" onClick={autoDetectKeyColor}><Sparkles size={16} />Key</button>
@@ -1869,13 +1972,15 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             <button className="quick-action" aria-label="Apply filled sheet" title="Apply the filled sheet to Sprite Studio" onClick={applyFilledSheet} disabled={!filledSheet}><Check size={16} />Apply</button>
             <button className="quick-action" aria-label="Export filled sheet" title="Export the filled sheet PNG" onClick={exportFilledSheet} disabled={!filledSheet}><Download size={16} />Export</button>
             <span className="strip-divider" />
-            <button className="tool" title="Zoom out" onClick={() => setZoom((value) => clamp(value - 0.25, 0.25, 4))}><Minus size={18} /></button>
-            <button className="tool" title="Zoom in" onClick={() => setZoom((value) => clamp(value + 0.25, 0.25, 4))}><Plus size={18} /></button>
+            <button className="tool" title="Zoom out" onClick={() => setZoom((value) => clamp(value - 0.25, MIN_ZOOM, MAX_ZOOM))}><Minus size={18} /></button>
+            <button className="tool" title="Zoom in" onClick={() => setZoom((value) => clamp(value + 0.25, MIN_ZOOM, MAX_ZOOM))}><Plus size={18} /></button>
+            <button className="quick-action" aria-label="Fit sheet" title="Fit the whole sheet inside the editor" onClick={() => zoomToFit('sheet')} disabled={!source}><Maximize2 size={16} />Fit</button>
+            <button className="quick-action" aria-label="Fit sheet width" title="Fit the sheet width to the editor" onClick={() => zoomToFit('width')} disabled={!source}><StretchHorizontal size={16} />Width</button>
             <span className="zoom-label">{Math.round(zoom * 100)}%</span>
           </div>
 
-          <div className="canvas-wrap">
-            <div className="sheet-canvas" style={{ width: sheetWidth, height: sheetHeight }}>
+          <div className="canvas-wrap" ref={canvasWrapRef}>
+            <div className="sheet-canvas" style={{ width: sheetWidth, height: sheetHeight }} data-source-size={`${source?.width ?? 0}x${source?.height ?? 0}`}>
               {source && (
                 <img
                   src={source.url}
@@ -1908,17 +2013,33 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
               )}
               {Array.from({ length: totalFrames }, (_, frame) => {
                 const rect = frameRect(frame);
+                const frameClasses = [
+                  'frame-cell',
+                  frame === selectedFrame ? 'selected' : activeFrames.includes(frame) ? 'in-animation' : '',
+                  totalFrames > 300 ? 'dense' : '',
+                  frame === dragFrame ? 'dragging' : '',
+                  frame === dropTargetFrame && frame !== dragFrame ? 'drop-target' : '',
+                ].filter(Boolean).join(' ');
                 return (
                   <button
                     key={frame}
-                    className={`${frame === selectedFrame ? 'frame-cell selected' : activeFrames.includes(frame) ? 'frame-cell in-animation' : 'frame-cell'} ${totalFrames > 300 ? 'dense' : ''}`}
+                    type="button"
+                    className={frameClasses}
                     style={{
                       left: rect.sx * displayScale,
                       top: rect.sy * displayScale,
                       width: frameWidth * displayScale,
                       height: frameHeight * displayScale,
                     }}
+                    draggable={Boolean(source)}
+                    title={`Frame ${frame}. Drag onto another frame to swap positions.`}
+                    aria-label={`Frame ${frame}`}
                     onClick={() => selectFrame(frame)}
+                    onDragStart={(event) => startFrameDrag(event, frame)}
+                    onDragEnter={(event) => updateFrameDropTarget(event, frame)}
+                    onDragOver={(event) => updateFrameDropTarget(event, frame)}
+                    onDrop={(event) => handleFrameDrop(event, frame)}
+                    onDragEnd={endFrameDrag}
                   >
                     <span>{frame}</span>
                     {frame === selectedFrame && <i style={{ left: pivot.x * displayScale, top: pivot.y * displayScale }} />}
@@ -2020,9 +2141,23 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             <NumberField label="End" value={selectedAnimation.end} min={0} max={totalFrames - 1} onChange={(value) => updateAnimation(selectedAnimation.id, { end: value })} />
           </div>
 
-          <PanelTitle label="Sample Palette" />
+          <PanelTitle label="Detected Palette" />
           <div className="swatches">
-            {paletteSwatches().map((color) => <span key={color} style={{ backgroundColor: color }} title={color} />)}
+            {paletteSwatches().map((color) => {
+              const normalizedColor = normalizeHexColor(color);
+              const selected = normalizedColor === normalizeHexColor(keyColor);
+              return (
+                <button
+                  key={color}
+                  className={selected ? 'selected' : ''}
+                  style={{ backgroundColor: normalizedColor }}
+                  title={`Use ${normalizedColor} as key color`}
+                  aria-label={`Use ${normalizedColor} as key color`}
+                  type="button"
+                  onClick={() => usePaletteKeyColor(normalizedColor)}
+                />
+              );
+            })}
           </div>
 
           <PanelTitle label="Export" />
@@ -2036,7 +2171,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           </label>
           <NumberField label="Padding" value={padding} min={0} max={16} onChange={setPadding} suffix="px" />
           <label className="toggle-row export-toggle">
-            <span>Normalize frame size</span>
+            <span>Normalize export frame size</span>
             <input type="checkbox" checked={normalizeExport} onChange={(event) => setNormalizeExport(event.target.checked)} />
           </label>
           <div className="two-inputs">
@@ -2044,7 +2179,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             <NumberField label="Export H" value={exportFrameHeight} min={8} max={MAX_FRAME_SIZE} onChange={setExportFrameHeight} suffix="px" />
           </div>
           <label className="toggle-row export-toggle">
-            <span>Remove key background</span>
+            <span>Remove key color on export</span>
             <input type="checkbox" checked={removeKeyBackground} onChange={(event) => setRemoveKeyBackground(event.target.checked)} />
           </label>
           <div className="key-cleanup-grid">
@@ -2065,7 +2200,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           }} disabled={animations.length < 2}><Trash2 size={18} />Remove Animation</button>
         </aside>
       </section>
-      ) : (
+      ) : activeTool === 'rotation' ? (
         <RotationCleanup
           source={source}
           frameWidth={frameWidth}
@@ -2074,7 +2209,8 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           rows={rows}
           totalFrames={totalFrames}
           selectedFrame={selectedFrame}
-          setSelectedFrame={setSelectedFrame}
+          selectFrame={selectFrame}
+          pivot={pivot}
           keyColor={keyColor}
           keyTolerance={keyTolerance}
           rotationStats={rotationStats}
@@ -2086,18 +2222,18 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           applyFilledSheet={applyFilledSheet}
           exportFilledSheet={exportFilledSheet}
         />
-      )}
-
-      {guideOpen && (
-        <div className="guide-layer" role="dialog" aria-modal="true" aria-label="Prompt builder">
-          <button className="guide-scrim" aria-label="Close prompt guide" onClick={() => setGuideOpen(false)} />
-          <aside className="guide-drawer">
-            <header className="guide-header">
+      ) : (
+        <section className="prompt-workspace" aria-label="Prompt Builder">
+          <div className="prompt-shell">
+            <header className="guide-header prompt-workspace-header">
               <div>
                 <strong>Prompt Builder</strong>
-                <span>SpriteForge-ready image prompts</span>
+                <span>SpriteForge-ready image prompts for assets that survive import, cleanup, and export.</span>
               </div>
-              <button className="icon-button" title="Close guide" onClick={() => setGuideOpen(false)}><X size={18} /></button>
+              <div className="prompt-workspace-actions">
+                <button className="secondary-action compact-action" type="button" onClick={syncPromptFromCurrentSheet}>Use Current Sheet Settings</button>
+                <button className="primary-action compact-action" type="button" onClick={copyPromptGuide}><ClipboardCopy size={16} />Copy Prompt</button>
+              </div>
             </header>
 
             <section className="guide-section compact">
@@ -2346,8 +2482,8 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
                 </section>
               </div>
             </details>
-          </aside>
-        </div>
+          </div>
+        </section>
       )}
 
       <footer className="statusbar">
@@ -2654,7 +2790,7 @@ function RotationCleanup({
   rows,
   totalFrames,
   selectedFrame,
-  setSelectedFrame,
+  selectFrame,
   keyColor,
   keyTolerance,
   rotationStats,
@@ -2670,6 +2806,26 @@ function RotationCleanup({
   const worstFrame = rotationStats?.worstFrame;
   const selectedStats = statsFrames.find((frame) => frame.frame === selectedFrame);
   const maxScore = Math.max(1, ...statsFrames.map((frame) => frame.score ?? 0));
+  const continuity = rotationStats?.continuity ?? null;
+  const continuityIssues = continuity?.issues ?? [];
+  const issuesByFrame = useMemo(() => {
+    const next = new Map();
+    continuityIssues.forEach((issue) => {
+      const frameIssues = next.get(issue.focusFrame) ?? [];
+      frameIssues.push(issue);
+      next.set(issue.focusFrame, frameIssues);
+    });
+    return next;
+  }, [continuityIssues]);
+  const selectedIssues = issuesByFrame.get(selectedFrame) ?? [];
+
+  function issueClass(issue) {
+    return issue?.type === 'stutter' ? 'issue-stutter' : 'issue-jump';
+  }
+
+  function issueText(issue) {
+    return `${issue.from} -> ${issue.to}${issue.wrap ? ' loop' : ''}: ${issue.detail}`;
+  }
 
   function frameBackground(frame, size = 96) {
     if (!source) return {};
@@ -2745,6 +2901,14 @@ function RotationCleanup({
             <strong>{worstFrame ? worstFrame.frame : '-'}</strong>
           </div>
           <div className="metric-card">
+            <span>Stutters</span>
+            <strong>{continuity ? continuity.stutterCount : '-'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>Jumps</span>
+            <strong>{continuity ? continuity.jumpCount : '-'}</strong>
+          </div>
+          <div className="metric-card">
             <span>Average center</span>
             <strong>{rotationStats ? `${rotationStats.avgX.toFixed(1)}, ${rotationStats.avgY.toFixed(1)}` : '-'}</strong>
           </div>
@@ -2769,30 +2933,70 @@ function RotationCleanup({
           </div>
         )}
 
+        {rotationStats && (
+          <div className={continuityIssues.length ? 'rotation-diagnostics has-issues' : 'rotation-diagnostics'}>
+            <div className="rotation-diagnostic-summary">
+              <strong>{continuityIssues.length ? `${continuityIssues.length} continuity issue${continuityIssues.length === 1 ? '' : 's'} found` : 'No obvious continuity stutters'}</strong>
+              <span>
+                Typical visual step {(continuity?.typicalDifference ? continuity.typicalDifference * 100 : 0).toFixed(1)}.
+                Low steps are duplicate-like; high steps are possible missing or wrong-angle frames.
+              </span>
+            </div>
+            {continuityIssues.length > 0 && (
+              <div className="rotation-issue-list">
+                {continuityIssues.slice(0, 12).map((issue) => (
+                  <button
+                    key={issue.id}
+                    className={`rotation-issue-button ${issueClass(issue)}`}
+                    onClick={() => selectFrame(issue.focusFrame)}
+                  >
+                    <span>{issue.label}</span>
+                    <strong>{issueText(issue)}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {rotationStats ? (
           <div className="rotation-frame-grid">
-            {statsFrames.map((frame) => (
-              <button
-                key={frame.frame}
-                className={frame.frame === selectedFrame ? 'rotation-frame-row active' : 'rotation-frame-row'}
-                onClick={() => selectFrame(frame.frame)}
-              >
-                <span>{frame.frame}</span>
-                <div className="rotation-mini-preview">
-                  <i style={frameBackground(frame.frame, 42)} />
-                </div>
-                <div className="rotation-row-data">
-                  <strong>{frame.pixels ? `${frame.wobble.toFixed(1)}px drift` : 'empty frame'}</strong>
-                  <small>{frame.width}x{frame.height} bounds, scale delta {frame.scaleDelta?.toFixed(1) ?? '0.0'}px</small>
-                  <em><b style={{ width: `${Math.min(100, ((frame.score ?? 0) / maxScore) * 100)}%` }} /></em>
-                </div>
-              </button>
-            ))}
+            {statsFrames.map((frame) => {
+              const frameIssues = issuesByFrame.get(frame.frame) ?? [];
+              const issueTypeClass = frameIssues.some((issue) => issue.type === 'stutter') ? 'issue-stutter' : frameIssues.length ? 'issue-jump' : '';
+              return (
+                <button
+                  key={frame.frame}
+                  className={[
+                    'rotation-frame-row',
+                    frame.frame === selectedFrame ? 'active' : '',
+                    frameIssues.length ? 'has-issue' : '',
+                    issueTypeClass,
+                  ].filter(Boolean).join(' ')}
+                  onClick={() => selectFrame(frame.frame)}
+                >
+                  <span>{frame.frame}</span>
+                  <div className="rotation-mini-preview">
+                    <i style={frameBackground(frame.frame, 42)} />
+                  </div>
+                  <div className="rotation-row-data">
+                    <strong>{frame.pixels ? `${frame.wobble.toFixed(1)}px drift` : 'empty frame'}</strong>
+                    <small>{frame.width}x{frame.height} bounds, scale delta {frame.scaleDelta?.toFixed(1) ?? '0.0'}px</small>
+                    {frameIssues.length > 0 && (
+                      <span className={`rotation-issue-chip ${issueTypeClass}`}>
+                        {frameIssues.map((issue) => issue.label).join(', ')}
+                      </span>
+                    )}
+                    <em><b style={{ width: `${Math.min(100, ((frame.score ?? 0) / maxScore) * 100)}%` }} /></em>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         ) : (
           <div className="rotation-empty">
             <strong>No rotation analysis yet</strong>
-            <span>Click Analyze Rotation Sheet to measure center drift, bounding boxes, and scale changes per frame.</span>
+            <span>Click Analyze Rotation Sheet to measure center drift, frame bounds, scale changes, and duplicate-like stutters.</span>
           </div>
         )}
       </section>
@@ -2810,6 +3014,14 @@ function RotationCleanup({
           <span>Center</span><strong>{selectedStats ? `${selectedStats.centerX.toFixed(1)}, ${selectedStats.centerY.toFixed(1)}` : '-'}</strong>
           <span>Drift</span><strong>{selectedStats ? `${selectedStats.wobble.toFixed(1)}px` : '-'}</strong>
         </div>
+        {selectedIssues.length > 0 && (
+          <div className="rotation-selected-issues">
+            <strong>Continuity flags</strong>
+            {selectedIssues.map((issue) => (
+              <span key={issue.id} className={issueClass(issue)}>{issueText(issue)}</span>
+            ))}
+          </div>
+        )}
         <div className="rotation-note">
           <strong>What this fixes</strong>
           <span>Position wobble from inconsistent internal placement. It cannot fully fix rotated drawings that have changed proportions, but it makes clean sheets much easier to use.</span>
