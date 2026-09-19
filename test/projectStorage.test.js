@@ -6,6 +6,7 @@ import {
   parseProjectBundleText,
   readLegacyProjects,
   writeLegacyProjects,
+  saveStoredProjects,
 } from '../src/lib/projectStorage.js';
 
 function createMemoryStorage() {
@@ -49,4 +50,42 @@ test('rejects invalid project bundle JSON', () => {
     () => parseProjectBundleText(JSON.stringify({ id: 'project_1' })),
     /Invalid SpriteForge project file/
   );
+});
+
+test('storage reports success only after the IndexedDB transaction commits', async () => {
+  const previousWindow = globalThis.window;
+  let shouldAbort = false;
+  let closed = 0;
+  const storage = createMemoryStorage();
+  const database = {
+    close() { closed += 1; },
+    transaction() {
+      const transaction = { objectStore: () => ({
+        put() {
+          const request = {};
+          queueMicrotask(() => {
+            request.onsuccess?.();
+            queueMicrotask(() => shouldAbort ? transaction.onabort?.() : transaction.oncomplete?.());
+          });
+          return request;
+        },
+      }) };
+      return transaction;
+    },
+  };
+  globalThis.window = { localStorage: storage, indexedDB: { open() {
+    const request = { result: database };
+    queueMicrotask(() => request.onsuccess());
+    return request;
+  } } };
+  try {
+    assert.equal(await saveStoredProjects([{ id: 'p', assets: [] }]), true);
+    shouldAbort = true;
+    assert.equal(await saveStoredProjects([{ id: 'p', assets: [{ id: 'a' }] }]), false);
+    assert.deepEqual(readLegacyProjects(storage), [], 'must not hide a failed transaction behind a stale fallback');
+    assert.equal(closed, 2);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
 });

@@ -81,7 +81,8 @@ function writeSetting(database, key, value) {
     const transaction = database.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
     const request = store.put(value, key);
-    request.onsuccess = () => resolve(true);
+    transaction.oncomplete = () => resolve(true);
+    transaction.onabort = () => reject(transaction.error ?? new Error('Project storage transaction was aborted.'));
     request.onerror = () => reject(request.error ?? new Error('Could not write project storage.'));
   });
 }
@@ -113,7 +114,9 @@ export async function saveStoredProjects(projects) {
     await writeSetting(database, PROJECTS_KEY, normalizedProjects);
     return true;
   } catch {
-    return writeLegacyProjects(normalizedProjects);
+    // A legacy fallback here could report success while the next load reads stale
+    // IndexedDB data. Keep the failure visible so the user can retry or back up.
+    return false;
   } finally {
     database.close();
   }

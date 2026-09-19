@@ -37,8 +37,19 @@ npm run build
 - Detected sprite boxes
 - Fill/pack detected sprites into a clean centered sheet
 - Rotation cleanup workspace
-- Project library for saving cleaned batches inside the browser session
+- Persistent local project library with Save Project and Save a Copy
+- Undo/redo for sheet edits, including frame swaps and applied packing
+- Unsaved-change warnings and session-only recovery for deleted library items
 - Dark mode
+
+## Saving and Recovery
+
+- **Save Project** saves the current asset and its settings in this browser. Saving a loaded asset updates it; **Save a Copy** creates another asset.
+- **Export PNG** downloads the selected animation. It does not save your editable project.
+- **Backup** downloads an editable project including current unsaved changes. Project JSON/ZIP exports contain the saved library assets.
+- Use **Ctrl/Cmd+Z** to undo, **Ctrl/Cmd+Shift+Z** or **Ctrl+Y** to redo, and **Ctrl/Cmd+S** to save. Text inputs keep their native undo behavior.
+- Document history retains up to 60 edits and resets when opening another asset. Deleted library items can be restored with **Undo deletion** until the tab closes.
+- Browser storage can be cleared or run out of space. Keep downloaded backups; save failures remain visible and do not count as successful saves.
 
 ## GitHub Pages
 

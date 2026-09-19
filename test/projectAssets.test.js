@@ -1,5 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { restoreLibraryItem, saveProjectAsset } from '../src/lib/projectAssets.js';
+
+test('save replaces an existing asset; a copy with a new id adds one', () => {
+  const project = { id: 'p', assets: [{ id: 'a', name: 'original' }] };
+  const saved = { id: 'a', name: 'updated', savedAt: 'today' };
+  let projects = saveProjectAsset([project], project, saved);
+  assert.deepEqual(projects[0].assets, [saved]);
+  projects = saveProjectAsset(projects, project, { ...saved, id: 'copy' });
+  assert.equal(projects[0].assets.length, 2);
+  assert.equal(project.assets[0].name, 'original');
+});
+
+test('undo asset deletion keeps later edits and can recover its missing project', () => {
+  const asset = { id: 'a', name: 'deleted' };
+  const project = { id: 'p', name: 'Before', assets: [asset] };
+  const deletion = { project, asset, index: 0 };
+  const current = [{ ...project, name: 'Renamed afterward', assets: [{ id: 'new' }] }];
+  const restored = restoreLibraryItem(current, deletion);
+  assert.equal(restored[0].name, 'Renamed afterward');
+  assert.deepEqual(restored[0].assets, [asset, { id: 'new' }]);
+  assert.deepEqual(restoreLibraryItem([], deletion)[0].assets, [asset]);
+  assert.equal(restoreLibraryItem(restored, deletion), restored);
+});
+
+test('undo project deletion does not overwrite another project', () => {
+  const project = { id: 'deleted', assets: [{ id: 'a' }] };
+  const later = { id: 'later', assets: [{ id: 'b' }] };
+  const restored = restoreLibraryItem([later], { project, index: 0 });
+  assert.deepEqual(restored, [project, later]);
+});
 import {
   compareProjectAssets,
   deleteProjectAsset,

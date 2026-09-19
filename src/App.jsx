@@ -17,7 +17,6 @@ import {
   Play,
   Plus,
   RotateCcw,
-  Save,
   Scissors,
   SkipBack,
   SkipForward,
@@ -54,7 +53,6 @@ import {
   findVisibleComponentsInImageData,
 } from './lib/importAnalysis.js';
 import {
-  clampAnimationRanges,
   getBestSliceableSuggestion,
   getPackedSuggestion,
   inferAnimationsForLayout as buildAnimationsForLayout,
@@ -83,13 +81,18 @@ import {
   deleteProjectAsset as removeProjectAsset,
   duplicateProjectAsset as copyProjectAsset,
   renameProjectAsset,
+  saveProjectAsset,
+  restoreLibraryItem,
 } from './lib/projectAssets.js';
 import {
   createProjectBundle,
   loadStoredProjects,
   parseProjectBundleText,
-  saveStoredProjects,
 } from './lib/projectStorage.js';
+import { assetFromDocument, documentFromAsset } from './lib/editorHistory.js';
+import { useEditorDocument } from './hooks/useEditorDocument.js';
+import { useProjectPersistence } from './hooks/useProjectPersistence.js';
+import { EditorActions } from './components/EditorActions.jsx';
 import {
   buildPivotStabilizationOffsets,
   scoreSilhouetteFrames,
@@ -219,32 +222,33 @@ function buildBatchLabels(assetGuideId, selectedPurposes) {
   return selectedPurposes.map((purpose) => `${purpose} animation row only`);
 }
 
+function createEditorDefaults() {
+  return {
+    source: null, frameWidth: DEFAULT_FRAME, frameHeight: DEFAULT_FRAME, columns: 8, rows: 3,
+    animations: initialAnimations, padding: 0, normalizeExport: false,
+    exportFrameWidth: DEFAULT_FRAME, exportFrameHeight: DEFAULT_FRAME,
+    metadataPresetId: EXPORT_PRESETS[0].id, removeKeyBackground: true,
+    keyColor: '#ff00ff', keyTolerance: 12, pivot: { x: 16, y: 28 }, offsets: {},
+    promptConfig: createPromptConfig(), activeAssetGuideId: assetGuides[0].id,
+  };
+}
+
 function App() {
-  const [source, setSource] = useState(null);
-  const [frameWidth, setFrameWidth] = useState(DEFAULT_FRAME);
-  const [frameHeight, setFrameHeight] = useState(DEFAULT_FRAME);
-  const [columns, setColumns] = useState(8);
-  const [rows, setRows] = useState(3);
+  const editor = useEditorDocument(createEditorDefaults);
+  const { source, frameWidth, frameHeight, columns, rows, animations, padding, normalizeExport,
+    exportFrameWidth, exportFrameHeight, metadataPresetId, removeKeyBackground, keyColor,
+    keyTolerance, pivot, offsets, promptConfig, activeAssetGuideId } = editor.document;
+  const { setSource, setFrameWidth, setFrameHeight, setColumns, setRows, setAnimations,
+    setPadding, setNormalizeExport, setExportFrameWidth, setExportFrameHeight, setMetadataPresetId,
+    setRemoveKeyBackground, setKeyColor, setKeyTolerance, setPivot, setOffsets,
+    setPromptConfig, setActiveAssetGuideId } = editor.setters;
   const [selectedFrame, setSelectedFrame] = useState(0);
   const [selectedAnimationId, setSelectedAnimationId] = useState('walk');
-  const [animations, setAnimations] = useState(initialAnimations);
   const [isPlaying, setIsPlaying] = useState(true);
   const [zoom, setZoom] = useState(2);
-  const [padding, setPadding] = useState(0);
-  const [normalizeExport, setNormalizeExport] = useState(false);
-  const [exportFrameWidth, setExportFrameWidth] = useState(DEFAULT_FRAME);
-  const [exportFrameHeight, setExportFrameHeight] = useState(DEFAULT_FRAME);
-  const [metadataPresetId, setMetadataPresetId] = useState(EXPORT_PRESETS[0].id);
-  const [removeKeyBackground, setRemoveKeyBackground] = useState(true);
-  const [keyColor, setKeyColor] = useState('#ff00ff');
-  const [keyTolerance, setKeyTolerance] = useState(12);
-  const [pivot, setPivot] = useState({ x: 16, y: 28 });
-  const [offsets, setOffsets] = useState({});
   const [status, setStatus] = useState('Ready');
   const [darkMode, setDarkMode] = useState(false);
-  const [promptConfig, setPromptConfig] = useState(() => createPromptConfig());
   const [formatManualOpen, setFormatManualOpen] = useState(false);
-  const [activeAssetGuideId, setActiveAssetGuideId] = useState(assetGuides[0].id);
   const [activeTool, setActiveTool] = useState('studio');
   const [rotationStats, setRotationStats] = useState(null);
   const [filledSheet, setFilledSheet] = useState(null);
@@ -254,6 +258,10 @@ function App() {
   const [dropTargetFrame, setDropTargetFrame] = useState(null);
   const [projects, setProjects] = useState([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [libraryLoadFailed, setLibraryLoadFailed] = useState(false);
+  const [loadedAsset, setLoadedAsset] = useState(null);
+  const [deletedItems, setDeletedItems] = useState([]);
+  const [sourceReady, setSourceReady] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [compareAssetIds, setCompareAssetIds] = useState([]);
   const [projectNameDraft, setProjectNameDraft] = useState('SpriteForge Project');
@@ -265,6 +273,24 @@ function App() {
   const projectFileInputRef = useRef(null);
   const sourceUrlRef = useRef(null);
   const preserveNextSourceStateRef = useRef(false);
+  const preserveGuideConfigRef = useRef(false);
+  const initializeSourceRef = useRef('example');
+  const storageState = useProjectPersistence(projects, projectsLoaded);
+  const storageProblem = libraryLoadFailed || storageState === 'error';
+  const savedAssetExists = loadedAsset && projects.some((project) => project.id === loadedAsset.projectId
+    && project.assets?.some((asset) => asset.id === loadedAsset.assetId));
+  const hasUnsavedEdits = editor.isDirty || Boolean(loadedAsset && !savedAssetExists);
+  const needsLeaveWarning = hasUnsavedEdits || storageState === 'saving' || storageProblem;
+  const unsavedEditsRef = useRef(hasUnsavedEdits);
+  unsavedEditsRef.current = hasUnsavedEdits;
+  const fileReadRequestRef = useRef(0);
+  const saveLabel = libraryLoadFailed ? 'Library unavailable — export a backup'
+    : storageState === 'error' ? 'Save failed — export a backup or retry Save'
+      : storageState === 'loading' ? 'Loading library…'
+        : storageState === 'saving' ? 'Saving in this browser…'
+          : hasUnsavedEdits ? 'Unsaved changes'
+            : loadedAsset ? 'Saved in this browser'
+              : 'Example — not saved';
 
   const activePromptChoices = useMemo(() => ({
     ...defaultPromptChoices,
@@ -579,8 +605,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       })
       .catch(() => {
         if (cancelled) return;
-        setProjects([]);
-        setProjectsLoaded(true);
+        setLibraryLoadFailed(true);
         setStatus('Project library storage could not be loaded');
       });
     return () => {
@@ -589,11 +614,30 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
   }, []);
 
   useEffect(() => {
-    if (!projectsLoaded) return;
-    saveStoredProjects(projects).catch(() => {
-      setStatus('Project library storage could not be saved');
-    });
-  }, [projects, projectsLoaded]);
+    if (!needsLeaveWarning) return;
+    const warn = (event) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [needsLeaveWarning]);
+
+  useEffect(() => {
+    const shortcut = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 's') {
+        event.preventDefault();
+        saveCurrentAssetToProject(event.shiftKey);
+        return;
+      }
+      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, [contenteditable="true"]')) return;
+      if (key === 'z' || key === 'y') {
+        event.preventDefault();
+        restoreEditorHistory(key === 'y' || event.shiftKey ? 'redo' : 'undo');
+      }
+    };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  });
 
   useEffect(() => {
     if (activeProjectId) return;
@@ -621,8 +665,12 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
   useEffect(() => {
     const choices = assetGuidePromptChoices[activeAssetGuideId];
+    if (preserveGuideConfigRef.current) {
+      preserveGuideConfigRef.current = false;
+      return;
+    }
     if (!choices) return;
-    setPromptConfig((current) => ({
+    editor.amend('promptConfig', (current) => ({
       ...current,
       characterType: choices.characterType?.[0] ?? current.characterType,
       gameGenre: choices.gameGenre?.[0] ?? current.gameGenre,
@@ -646,9 +694,11 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
   useEffect(() => {
     if (!source?.url) return;
+    setSourceReady(false);
     const image = new Image();
     image.onload = () => {
       imageRef.current = image;
+      setSourceReady(true);
       const isNewSource = sourceUrlRef.current !== source.url;
       sourceUrlRef.current = source.url;
       if (isNewSource) {
@@ -716,10 +766,16 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
                 : `${source.name} analyzed: ${analysis.detectedSprites} sprites detected. Pick a grid to apply or use Fill.`
               : `${source.name} loaded as one unsliced sheet`
         );
+        if (initializeSourceRef.current) {
+          editor.initialize(initializeSourceRef.current === 'example');
+          initializeSourceRef.current = null;
+        }
       }
       requestAnimationFrame(drawPreview);
     };
+    image.onerror = () => setStatus('Could not load source image');
     image.src = source.url;
+    return () => { image.onload = null; image.onerror = null; };
   }, [source]);
 
   const totalFrames = Math.max(1, columns * rows);
@@ -732,7 +788,6 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
   useEffect(() => {
     setSelectedFrame((current) => clamp(current, 0, totalFrames - 1));
-    setAnimations((current) => clampAnimationRanges(current, totalFrames));
   }, [totalFrames]);
 
   useEffect(() => {
@@ -921,11 +976,20 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
   async function handleFile(file) {
     if (!file) return;
+    const requestId = ++fileReadRequestRef.current;
     try {
       const nextSource = await readImageFile(file);
-      setSource(nextSource);
+      if (requestId !== fileReadRequestRef.current) return;
+      if (!confirmReplaceEditor()) return;
+      initializeSourceRef.current = 'import';
+      preserveNextSourceStateRef.current = false;
+      preserveGuideConfigRef.current = activeAssetGuideId !== assetGuides[0].id;
+      sourceUrlRef.current = null;
+      setLoadedAsset(null);
+      setSourceReady(false);
+      editor.reset({ ...createEditorDefaults(), source: nextSource }, false);
       setSelectedFrame(0);
-      setOffsets({});
+      setIsPlaying(false);
     } catch (error) {
       setStatus(error.message);
     }
@@ -1304,6 +1368,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       { columns: sheet.columns, rows: sheet.rows, kind: sheet.mode === 'detected boxes' ? 'packed detected sprites' : 'detected rows' },
       sheet.count
     );
+    preserveNextSourceStateRef.current = true;
     setSource({
       name: `${source?.name?.replace(/\.[^.]+$/, '') || 'spriteforge'}_filled.png`,
       url: sheet.url,
@@ -1635,6 +1700,8 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       setStatus('No project selected');
       return;
     }
+    if (!window.confirm(`Delete project "${activeProject.name}" and its saved assets? You can undo this while this tab stays open.`)) return;
+    setDeletedItems((current) => [...current, { project: activeProject, index: projects.findIndex((project) => project.id === activeProjectId) }]);
     const nextProjects = projects.filter((project) => project.id !== activeProjectId);
     const nextActiveProject = nextProjects[0] ?? null;
     setProjects(nextProjects);
@@ -1645,9 +1712,54 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
   function deleteProjectAsset(assetId) {
     if (!activeProjectId) return;
+    const asset = activeProject.assets.find((item) => item.id === assetId);
+    if (!asset || !window.confirm(`Delete "${asset.name}" from the library? You can undo this while this tab stays open.`)) return;
+    setDeletedItems((current) => [...current, { project: activeProject, asset, index: activeProject.assets.indexOf(asset) }]);
     setProjects((current) => removeProjectAsset(current, activeProjectId, assetId));
     setCompareAssetIds((current) => current.filter((id) => id !== assetId));
     setStatus('Deleted saved asset');
+  }
+
+  function undoLibraryDeletion() {
+    const deletion = deletedItems.at(-1);
+    if (!deletion) return;
+    setProjects((current) => restoreLibraryItem(current, deletion));
+    setActiveProjectId(deletion.project.id);
+    setDeletedItems((current) => current.slice(0, -1));
+    setStatus(`Restored ${deletion.asset?.name ?? deletion.project.name}`);
+  }
+
+  function confirmReplaceEditor() {
+    return !unsavedEditsRef.current || window.confirm('This sheet has unsaved changes. Discard them and open another sheet? Choose Cancel to save your project first.');
+  }
+
+  function openDemoSheet() {
+    if (!confirmReplaceEditor()) return;
+    fileReadRequestRef.current += 1;
+    initializeSourceRef.current = 'example';
+    preserveNextSourceStateRef.current = false;
+    preserveGuideConfigRef.current = activeAssetGuideId !== assetGuides[0].id;
+    sourceUrlRef.current = null;
+    setLoadedAsset(null);
+    setSourceReady(false);
+    editor.reset({ ...createEditorDefaults(), source: createDemoSheet() });
+    setSelectedAnimationId('walk');
+    setSelectedFrame(0);
+    setIsPlaying(false);
+  }
+
+  function restoreEditorHistory(direction) {
+    const target = direction === 'undo' ? editor.undoTarget : editor.redoTarget;
+    if (!target || !sourceReady) return;
+    preserveNextSourceStateRef.current = target.source?.url !== source?.url;
+    preserveGuideConfigRef.current = target.activeAssetGuideId !== activeAssetGuideId;
+    if (preserveNextSourceStateRef.current) setSourceReady(false);
+    editor[direction]();
+    setIsPlaying(false);
+    setFilledSheet(null);
+    setImportAnalysis(null);
+    setRotationStats(null);
+    setStatus(direction === 'undo' ? 'Undid edit' : 'Redid edit');
   }
 
   function renameSavedAsset(assetId, name) {
@@ -1672,83 +1784,43 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     });
   }
 
-  function saveCurrentAssetToProject() {
-    if (!source) {
-      setStatus('Import an asset before saving it to a project');
+  function saveCurrentAssetToProject(asCopy = false) {
+    if (!source || !sourceReady || !projectsLoaded) {
+      setStatus('Wait for the source and project library to finish loading before saving');
       return;
     }
-
-    const now = new Date().toISOString();
-    const asset = {
-      id: makeId('asset'),
-      name: source.name ?? 'untitled_asset.png',
-      savedAt: now,
-      source,
-      activeAssetGuideId,
-      promptConfig,
-      sheet: {
-        frameWidth,
-        frameHeight,
-        columns,
-        rows,
-        selectedFrame,
-        pivot,
-        offsets,
-        keyColor,
-        keyTolerance,
-        removeKeyBackground,
-        normalizeExport,
-        exportFrameWidth,
-        exportFrameHeight,
-        padding,
-      },
-      animations,
-    };
-
+    const existingAsset = loadedAsset?.projectId === activeProjectId
+      ? activeProject?.assets?.find((asset) => asset.id === loadedAsset.assetId) : null;
+    const baseName = existingAsset?.name ?? source.name ?? 'untitled_asset.png';
+    const asset = assetFromDocument(editor.document, {
+      id: !asCopy && existingAsset ? existingAsset.id : makeId('asset'),
+      name: asCopy ? `${baseName} copy` : baseName,
+      selectedFrame,
+    });
     const fallbackProject = activeProject ?? createProject(projectNameDraft || 'SpriteForge Project');
     setActiveProjectId(fallbackProject.id);
-    setProjects((current) => {
-      const existingProject = current.find((project) => project.id === fallbackProject.id);
-      const project = existingProject ?? fallbackProject;
-      const nextProject = {
-        ...project,
-        name: projectNameDraft || project.name,
-        updatedAt: now,
-        assets: [asset, ...(project.assets ?? [])],
-      };
-      const nextProjects = existingProject
-        ? current.map((item) => (item.id === project.id ? nextProject : item))
-        : [nextProject, ...current];
-      return nextProjects;
-    });
-    setStatus(`Saved ${asset.name} to project`);
+    setProjects((current) => saveProjectAsset(current, fallbackProject, asset));
+    setLoadedAsset({ projectId: fallbackProject.id, assetId: asset.id });
+    editor.markSaved(editor.document);
+    setStatus(`${asCopy ? 'Saving copy of' : existingAsset ? 'Updating' : 'Saving'} ${baseName} in this browser`);
   }
 
   function loadProjectAsset(asset) {
     if (!asset?.source) return;
-    const loadedColumns = asset.sheet?.columns ?? 1;
-    const loadedRows = asset.sheet?.rows ?? 1;
-    const loadedFrameCount = Math.max(1, loadedColumns * loadedRows);
-    const loadedAnimations = clampAnimationRanges(asset.animations ?? initialAnimations, loadedFrameCount);
-    setSource(asset.source);
-    setFrameWidth(asset.sheet?.frameWidth ?? DEFAULT_FRAME);
-    setFrameHeight(asset.sheet?.frameHeight ?? DEFAULT_FRAME);
-    setColumns(loadedColumns);
-    setRows(loadedRows);
-    setSelectedFrame(clamp(asset.sheet?.selectedFrame ?? 0, 0, loadedFrameCount - 1));
-    setPivot(asset.sheet?.pivot ?? { x: 16, y: 28 });
-    setOffsets(asset.sheet?.offsets ?? {});
-    setKeyColor(asset.sheet?.keyColor ?? '#ff00ff');
-    setKeyTolerance(asset.sheet?.keyTolerance ?? 12);
-    setRemoveKeyBackground(asset.sheet?.removeKeyBackground ?? true);
-    setNormalizeExport(asset.sheet?.normalizeExport ?? false);
-    setExportFrameWidth(asset.sheet?.exportFrameWidth ?? asset.sheet?.frameWidth ?? DEFAULT_FRAME);
-    setExportFrameHeight(asset.sheet?.exportFrameHeight ?? asset.sheet?.frameHeight ?? DEFAULT_FRAME);
-    setPadding(asset.sheet?.padding ?? 0);
-    setAnimations(loadedAnimations);
-    setSelectedAnimationId(loadedAnimations[0]?.id ?? 'idle');
-    setPromptConfig(asset.promptConfig ?? createPromptConfig());
-    setActiveAssetGuideId(asset.activeAssetGuideId ?? 'sprite-sheet');
+    if (!confirmReplaceEditor()) return;
+    fileReadRequestRef.current += 1;
+    const document = documentFromAsset(asset, createEditorDefaults());
+    preserveNextSourceStateRef.current = document.source?.url !== source?.url;
+    preserveGuideConfigRef.current = document.activeAssetGuideId !== activeAssetGuideId;
+    initializeSourceRef.current = null;
+    editor.reset(document);
+    setLoadedAsset({ projectId: activeProjectId, assetId: asset.id });
+    setSelectedFrame(clamp(asset.sheet?.selectedFrame ?? 0, 0, document.columns * document.rows - 1));
+    setSelectedAnimationId(document.animations[0].id);
+    setIsPlaying(false);
+    setImportAnalysis(null);
+    setFilledSheet(null);
+    setRotationStats(null);
     setStatus(`Loaded ${asset.name} from project`);
   }
 
@@ -1762,6 +1834,17 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     const filename = `${sanitizeExportName(project.name, 'spriteforge_project')}.json`;
     downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), filename);
     setStatus(`Exported project ${project.name}`);
+  }
+
+  function exportCurrentBackup() {
+    if (!source) return;
+    const project = activeProject ?? createProject(projectNameDraft);
+    const existing = loadedAsset?.projectId === project.id
+      ? project.assets.find((asset) => asset.id === loadedAsset.assetId) : null;
+    const asset = assetFromDocument(editor.document, { id: existing?.id ?? makeId('asset'), name: existing?.name ?? source.name, selectedFrame });
+    const backup = saveProjectAsset([project], project, asset)[0];
+    downloadBlob(new Blob([JSON.stringify(createProjectBundle(backup), null, 2)], { type: 'application/json' }), `${sanitizeExportName(project.name)}_backup.json`);
+    setStatus('Downloaded editable backup including current changes; browser save status is unchanged');
   }
 
   async function exportActiveProjectZip() {
@@ -1846,9 +1929,8 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           <button className={activeTool === 'rotation' ? 'active' : ''} onClick={() => setActiveTool('rotation')}>Rotation Cleanup</button>
         </nav>
         <div className="top-actions">
-          <button className="icon-button" title="New demo sheet" onClick={() => setSource(createDemoSheet())}><Scissors size={18} /></button>
+          <button className="icon-button" title="New demo sheet" onClick={openDemoSheet}><Scissors size={18} /></button>
           <button className="icon-button" title="Open PNG" onClick={() => fileInputRef.current?.click()}><FolderOpen size={18} /></button>
-          <button className="icon-button" title="Export selected animation PNG" onClick={exportSpriteSheet}><Save size={18} /></button>
           <button
             className="icon-button"
             title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -1858,6 +1940,14 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           </button>
         </div>
+        <EditorActions
+          canUndo={sourceReady && editor.canUndo} canRedo={sourceReady && editor.canRedo}
+          onUndo={() => restoreEditorHistory('undo')} onRedo={() => restoreEditorHistory('redo')}
+          onSave={() => saveCurrentAssetToProject()} onSaveCopy={() => saveCurrentAssetToProject(true)}
+          onExport={exportSpriteSheet} onBackup={exportCurrentBackup}
+          saveLabel={saveLabel} saveProblem={storageProblem || hasUnsavedEdits} storageProblem={storageProblem}
+          ready={sourceReady} canSave={sourceReady && projectsLoaded}
+        />
       </header>
 
       {activeTool === 'studio' ? (
@@ -1868,7 +1958,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             <ImagePlus size={28} />
             <strong>Import Source</strong>
             <span>PNG, JPG, WEBP or drag and drop</span>
-            <input ref={fileInputRef} type="file" accept="image/*" onChange={(event) => handleFile(event.target.files?.[0])} />
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={(event) => { handleFile(event.target.files?.[0]); event.target.value = ''; }} />
           </label>
 
           <div className="source-card">
@@ -1889,7 +1979,11 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             onRenameProject={renameActiveProject}
             onCreateProject={createNewProject}
             onDeleteProject={deleteActiveProject}
-            onSaveAsset={saveCurrentAssetToProject}
+            onSaveAsset={() => saveCurrentAssetToProject()}
+            canSave={sourceReady && projectsLoaded}
+            deletedCount={deletedItems.length}
+            onUndoDeletion={undoLibraryDeletion}
+            onBackup={exportCurrentBackup}
             onLoadAsset={loadProjectAsset}
             onDeleteAsset={deleteProjectAsset}
             onRenameAsset={renameSavedAsset}
@@ -2489,7 +2583,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       <footer className="statusbar">
         <span>SpriteForge 0.1.0</span>
         <span className="status-dot" />
-        <span>{status}</span>
+        <span role="status">{status}</span>
         <span className="push-right">{totalFrames} frames</span>
         <span>{source?.name?.split('.').pop()?.toUpperCase() ?? 'PNG'}</span>
       </footer>
@@ -2508,6 +2602,10 @@ function ProjectLibraryPanel({
   onCreateProject,
   onDeleteProject,
   onSaveAsset,
+  canSave,
+  deletedCount,
+  onUndoDeletion,
+  onBackup,
   onLoadAsset,
   onDeleteAsset,
   onRenameAsset,
@@ -2545,9 +2643,10 @@ function ProjectLibraryPanel({
       />
       <div className="project-actions">
         <button type="button" onClick={onCreateProject}>New</button>
-        <button type="button" onClick={onSaveAsset}>Save Asset</button>
-        <button type="button" onClick={onExportProject}>Export</button>
-        <button type="button" onClick={onExportProjectZip}>Export ZIP</button>
+        <button type="button" onClick={onSaveAsset} disabled={!canSave}>Save Project</button>
+        <button type="button" onClick={onExportProject} title="Download saved library assets as an editable project">Project JSON</button>
+        <button type="button" onClick={onExportProjectZip} title="Download saved library assets and their source images">Project ZIP</button>
+        <button type="button" onClick={onBackup} title="Download an editable project including current unsaved changes">Backup</button>
         <button type="button" onClick={() => projectFileInputRef.current?.click()}>Import</button>
         <button type="button" onClick={onDeleteProject}>Delete</button>
         <input
@@ -2560,6 +2659,13 @@ function ProjectLibraryPanel({
           }}
         />
       </div>
+      <p className="library-storage-note">Saved only in this browser. Download a backup to keep a portable copy.</p>
+      {deletedCount > 0 && (
+        <div className="library-recovery" role="status">
+          <button type="button" onClick={onUndoDeletion}>Undo deletion ({deletedCount})</button>
+          <span>Recovery is available until this tab closes.</span>
+        </div>
+      )}
       <div className="project-asset-list">
         {assets.length ? (
           assets.slice(0, 8).map((asset) => (

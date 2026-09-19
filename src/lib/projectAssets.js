@@ -2,6 +2,36 @@ function updateProject(projects, projectId, updater) {
   return projects.map((project) => (project.id === projectId ? updater(project) : project));
 }
 
+export function saveProjectAsset(projects, fallbackProject, asset) {
+  const project = projects.find((item) => item.id === fallbackProject.id) ?? fallbackProject;
+  const exists = (project.assets ?? []).some((item) => item.id === asset.id);
+  const nextProject = {
+    ...project,
+    updatedAt: asset.savedAt,
+    assets: exists ? project.assets.map((item) => item.id === asset.id ? asset : item) : [asset, ...(project.assets ?? [])],
+  };
+  return projects.some((item) => item.id === project.id)
+    ? projects.map((item) => item.id === project.id ? nextProject : item)
+    : [nextProject, ...projects];
+}
+
+// Restore only the deleted item, never roll back unrelated library work.
+export function restoreLibraryItem(projects, deletion) {
+  const existingProject = projects.find((project) => project.id === deletion.project.id);
+  if (!deletion.asset) {
+    if (existingProject) return projects;
+    const next = [...projects];
+    next.splice(Math.min(deletion.index, next.length), 0, deletion.project);
+    return next;
+  }
+  const project = existingProject ?? { ...deletion.project, assets: [] };
+  if (project.assets.some((asset) => asset.id === deletion.asset.id)) return projects;
+  const assets = [...project.assets];
+  assets.splice(Math.min(deletion.index, assets.length), 0, deletion.asset);
+  const restored = { ...project, assets, updatedAt: new Date().toISOString() };
+  return existingProject ? projects.map((item) => item.id === project.id ? restored : item) : [restored, ...projects];
+}
+
 export function renameProjectAsset(projects, projectId, assetId, nextName) {
   const cleanName = String(nextName || '').trim();
   if (!cleanName) return projects;
