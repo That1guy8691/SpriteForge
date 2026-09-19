@@ -1475,8 +1475,9 @@ button {
 .drop-zone {
   display: grid;
   place-items: center;
+  align-content: center;
   gap: 5px;
-  height: 96px;
+  min-height: 112px;
   padding: 12px;
   border: 1px dashed #cdd6df;
   border-radius: 7px;
@@ -2257,7 +2258,7 @@ button {
 
 .center-stage {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) 34px 204px;
+  grid-template-rows: auto minmax(0, 1fr) 34px auto;
   min-width: 0;
   min-height: 0;
   background: #f4f7f9;
@@ -2487,7 +2488,7 @@ button {
 
 .timeline {
   display: grid;
-  grid-template-rows: 36px 40px minmax(0, 1fr);
+  grid-template-rows: 36px minmax(48px, auto) auto;
   gap: 8px;
   min-width: 0;
   padding: 10px 16px 14px;
@@ -2498,7 +2499,13 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
   height: 36px;
+}
+
+.timeline-head > button,
+.timeline-head > strong {
+  flex-shrink: 0;
 }
 
 .timeline-head strong {
@@ -2507,6 +2514,10 @@ button {
 }
 
 .timeline-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #455464;
   font-size: 12px;
 }
@@ -2516,6 +2527,9 @@ button {
   grid-template-columns: minmax(140px, 1.4fr) repeat(3, minmax(92px, 0.8fr)) 74px 82px 82px;
   gap: 8px;
   align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .timeline-name-field,
@@ -2794,14 +2808,32 @@ button {
 
   .workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(520px, 1fr) 320px;
+    grid-template-rows: minmax(640px, 1fr) 320px;
     overflow-y: auto;
   }
 
   .rotation-workspace {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    display: block;
     overflow: auto;
+  }
+
+  .rotation-panel,
+  .rotation-main,
+  .rotation-inspector {
+    overflow: visible;
+  }
+
+  .rotation-inspector {
+    border-left: 0;
+    border-top: 1px solid #d9e0e7;
+  }
+
+  .rotation-header {
+    flex-wrap: wrap;
+  }
+
+  .filled-sheet-card {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .prompt-workspace {
@@ -2832,7 +2864,7 @@ button {
 
   .center-stage {
     grid-row: 1;
-    grid-template-rows: auto minmax(0, 1fr) 30px 230px;
+    grid-template-rows: auto minmax(0, 1fr) 30px auto;
   }
 
   .statusbar > span { white-space: nowrap; }
@@ -2840,8 +2872,6 @@ button {
 
   .timeline-editor {
     grid-template-columns: minmax(130px, 1fr) repeat(3, minmax(86px, 0.7fr)) 68px 76px 76px;
-    overflow-x: auto;
-    padding-bottom: 2px;
   }
 
   .chain-help {
@@ -3119,6 +3149,10 @@ button {
 .theme-dark .muted-row,
 .theme-dark .stage-status,
 .theme-dark .timeline-head span,
+.theme-dark .timeline-name-field,
+.theme-dark .timeline-loop,
+.theme-dark .export-preset-field,
+.theme-dark .color-field,
 .theme-dark .thumb small,
 .theme-dark .number-field,
 .theme-dark .number-field em,
@@ -3153,6 +3187,11 @@ button {
 }
 
 .theme-dark .rotation-diagnostics {
+  border-color: #286d75;
+  background: #102228;
+}
+
+.theme-dark .rotation-header > strong {
   border-color: #286d75;
   background: #102228;
 }
