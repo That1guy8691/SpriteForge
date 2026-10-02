@@ -158,6 +158,46 @@ button {
   border-top: 1px solid #d9e0e7;
 }
 
+.editor-actions .studio-settings-toggle { display: none; }
+
+.studio-optional {
+  margin-top: 14px;
+  border-top: 1px solid #d5dee7;
+  padding-top: 10px;
+}
+
+.studio-optional > summary,
+.library-report > summary {
+  cursor: pointer;
+  color: #344151;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.studio-optional > summary span {
+  float: right;
+  color: #647180;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.cleanup-actions { display: grid; gap: 6px; margin-top: 10px; }
+.stepper input {
+  width: 52px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+.theme-dark .studio-optional { border-color: #2b3744; }
+.theme-dark .studio-optional > summary,
+.theme-dark .library-report > summary { color: #dbe5ee; }
+.theme-dark .studio-optional > summary span { color: #9aa9b8; }
+
 .document-save-state {
   flex: 1 1 160px;
   color: #39724d;
@@ -2640,7 +2680,7 @@ button {
 .preview-box {
   display: grid;
   place-items: center;
-  height: 132px;
+  height: 216px;
   margin-top: 6px;
   border: 1px solid #d7e0e8;
   border-radius: 7px;
@@ -2657,8 +2697,8 @@ button {
 .preview-box canvas {
   width: auto;
   height: auto;
-  max-width: 124px;
-  max-height: 124px;
+  max-width: 100%;
+  max-height: 192px;
   image-rendering: pixelated;
 }
 
@@ -2818,10 +2858,12 @@ button {
   }
 
   .workspace {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(640px, 1fr) 320px;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
   }
+
+  .editor-actions .studio-settings-toggle { display: inline-flex; }
 
   .rotation-workspace {
     display: block;
@@ -2868,13 +2910,24 @@ button {
     display: none;
   }
 
+  .left-panel.mobile-open {
+    display: block;
+    flex: 0 0 auto;
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid #d9e0e7;
+  }
+
   .right-panel {
+    flex: 0 0 auto;
+    overflow: visible;
     border-left: 0;
     border-top: 1px solid #d9e0e7;
   }
 
   .center-stage {
-    grid-row: 1;
+    flex: 0 0 auto;
+    min-height: 640px;
     grid-template-rows: auto minmax(0, 1fr) 30px auto;
   }
 

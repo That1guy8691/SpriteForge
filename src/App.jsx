@@ -1,13 +1,9 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlignCenter,
-  Check,
   ClipboardCopy,
-  Copy,
   Download,
   FileJson,
   FolderOpen,
-  GitCompare,
   Grid3X3,
   ImagePlus,
   Maximize2,
@@ -16,7 +12,6 @@ import {
   Pause,
   Play,
   Plus,
-  RotateCcw,
   Scissors,
   SkipBack,
   SkipForward,
@@ -74,8 +69,6 @@ import {
 } from './lib/projectExport.js';
 import {
   analyzeProject,
-  formatBytes,
-  formatCompactNumber,
 } from './lib/projectMetrics.js';
 import {
   compareProjectAssets,
@@ -94,11 +87,12 @@ import { assetFromDocument, documentFromAsset } from './lib/editorHistory.js';
 import { useEditorDocument } from './hooks/useEditorDocument.js';
 import { useProjectPersistence } from './hooks/useProjectPersistence.js';
 import { EditorActions } from './components/EditorActions.jsx';
+import { ProjectLibraryPanel } from './components/ProjectLibraryPanel.jsx';
 import {
   buildPivotStabilizationOffsets,
   scoreSilhouetteFrames,
 } from './lib/rotationAnalysis.js';
-import { createDemoSheet } from './lib/demoSheet.js';
+import { createDemoSheet, DEMO_ANIMATIONS } from './lib/demoSheet.js';
 import { recommendedInitialZoom } from './lib/viewport.js';
 
 const DEFAULT_FRAME = 32;
@@ -108,12 +102,7 @@ const FRAME_DRAG_TYPE = 'application/x-spriteforge-frame';
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
 
-const initialAnimations = [
-  { id: 'idle', name: 'idle', start: 0, end: 3, fps: 6, loop: true },
-  { id: 'walk', name: 'walk', start: 4, end: 11, fps: 10, loop: true },
-  { id: 'attack', name: 'attack', start: 12, end: 17, fps: 12, loop: false },
-  { id: 'hurt', name: 'hurt', start: 18, end: 19, fps: 8, loop: false },
-];
+const initialAnimations = DEMO_ANIMATIONS;
 
 function inferAnimationsForLayout(suggestion, detectedSprites) {
   return buildAnimationsForLayout(suggestion, detectedSprites, initialAnimations);
@@ -251,6 +240,8 @@ function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [formatManualOpen, setFormatManualOpen] = useState(false);
   const [activeTool, setActiveTool] = useState('studio');
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [studioSettingsOpen, setStudioSettingsOpen] = useState(false);
   const [rotationStats, setRotationStats] = useState(null);
   const [filledSheet, setFilledSheet] = useState(null);
   const [importAnalysis, setImportAnalysis] = useState(null);
@@ -273,6 +264,7 @@ function App() {
   const canvasWrapRef = useRef(null);
   const fileInputRef = useRef(null);
   const projectFileInputRef = useRef(null);
+  const libraryDetailsRef = useRef(null);
   const sourceUrlRef = useRef(null);
   const preserveNextSourceStateRef = useRef(false);
   const preserveGuideConfigRef = useRef(false);
@@ -974,9 +966,10 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     ctx.drawImage(image, rect.sx, rect.sy, rect.sw, rect.sh, dx + offset.x * scale, dy + offset.y * scale, rect.sw * scale, rect.sh * scale);
     if (drawPivot) {
       ctx.fillStyle = '#1097a2';
-      ctx.fillRect(dx + pivot.x * scale - 3, dy + pivot.y * scale - 3, 6, 6);
-      ctx.strokeStyle = '#0f172a';
-      ctx.strokeRect(dx + pivot.x * scale - 3.5, dy + pivot.y * scale - 3.5, 7, 7);
+      const px = dx + pivot.x * scale;
+      const py = dy + pivot.y * scale;
+      ctx.fillRect(px - 1, py, 3, 1);
+      ctx.fillRect(px, py - 1, 1, 3);
     }
   }
 
@@ -1931,7 +1924,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           <button className={activeTool === 'rotation' ? 'active' : ''} onClick={() => setActiveTool('rotation')}>Rotation Cleanup</button>
         </nav>
         <div className="top-actions">
-          <button className="icon-button" title="New demo sheet" onClick={openDemoSheet}><Scissors size={18} /></button>
+          <button className="icon-button" title="Load ranger demo sheet" onClick={openDemoSheet}><Scissors size={18} /></button>
           <button className="icon-button" title="Open PNG" onClick={() => fileInputRef.current?.click()}><FolderOpen size={18} /></button>
           <button
             className="icon-button"
@@ -1945,7 +1938,13 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
         <EditorActions
           canUndo={sourceReady && editor.canUndo} canRedo={sourceReady && editor.canRedo}
           onUndo={() => restoreEditorHistory('undo')} onRedo={() => restoreEditorHistory('redo')}
-          onSave={() => saveCurrentAssetToProject()} onSaveCopy={() => saveCurrentAssetToProject(true)}
+          onSave={() => saveCurrentAssetToProject()}
+          onOpenLibrary={() => {
+            setActiveTool('studio'); setLibraryOpen(true); setStudioSettingsOpen(true);
+            requestAnimationFrame(() => libraryDetailsRef.current?.scrollIntoView({ block: 'nearest' }));
+          }}
+          onToggleSettings={activeTool === 'studio' ? () => setStudioSettingsOpen((open) => !open) : undefined}
+          settingsOpen={studioSettingsOpen}
           onExport={exportSpriteSheet} onBackup={exportCurrentBackup}
           saveLabel={saveLabel} saveProblem={storageProblem || hasUnsavedEdits} storageProblem={storageProblem}
           ready={sourceReady} canSave={sourceReady && projectsLoaded}
@@ -1954,7 +1953,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
       {activeTool === 'studio' ? (
       <section className="workspace">
-        <aside className="left-panel">
+        <aside id="studio-settings" className={studioSettingsOpen ? 'left-panel mobile-open' : 'left-panel'} aria-label="Sheet settings">
           <PanelTitle label="Source" />
           <label className="drop-zone" htmlFor="source-image-input" onDrop={(event) => { event.preventDefault(); handleFile(event.dataTransfer.files?.[0]); }} onDragOver={(event) => event.preventDefault()}>
             <ImagePlus size={28} />
@@ -1970,42 +1969,9 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             </div>
           </div>
 
-          <ProjectLibraryPanel
-            projects={projects}
-            activeProject={activeProject}
-            activeProjectId={activeProjectId}
-            projectNameDraft={projectNameDraft}
-            projectFileInputRef={projectFileInputRef}
-            onSelectProject={(projectId) => setActiveProjectId(projectId)}
-            onRenameProject={renameActiveProject}
-            onCreateProject={createNewProject}
-            onDeleteProject={deleteActiveProject}
-            onSaveAsset={() => saveCurrentAssetToProject()}
-            canSave={sourceReady && projectsLoaded}
-            deletedCount={deletedItems.length}
-            onUndoDeletion={undoLibraryDeletion}
-            onBackup={exportCurrentBackup}
-            onLoadAsset={loadProjectAsset}
-            onDeleteAsset={deleteProjectAsset}
-            onRenameAsset={renameSavedAsset}
-            onDuplicateAsset={duplicateSavedAsset}
-            onToggleCompareAsset={toggleCompareAsset}
-            compareAssetIds={compareAssetIds}
-            assetComparison={assetComparison}
-            projectMetrics={activeProjectMetrics}
-            onExportProject={exportActiveProject}
-            onExportProjectZip={exportActiveProjectZip}
-            onImportProject={importProjectBundle}
-          />
 
-          <ImportAnalysisPanel
-            analysis={importAnalysis}
-            onAnalyze={reanalyzeImport}
-            onApplyLayout={applyImportLayout}
-            onFill={createFilledSheet}
-          />
-
-          <PanelTitle label="Frame Size" />
+          <PanelTitle label="1. Slice the sheet" />
+          <p className="export-help">Set the cell size and grid to match your image.</p>
           <div className="two-inputs">
             <NumberField label="W" value={frameWidth} min={8} max={MAX_FRAME_SIZE} onChange={setFrameWidth} suffix="px" />
             <NumberField label="H" value={frameHeight} min={8} max={MAX_FRAME_SIZE} onChange={setFrameHeight} suffix="px" />
@@ -2031,7 +1997,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
           <div className="muted-row">Total Frames: <strong>{totalFrames}</strong></div>
 
           <div className="panel-title with-action">
-            <span>Animations</span>
+            <span>2. Choose an animation</span>
             <button title="Add animation" onClick={() => {
               const id = `anim_${animations.length + 1}`;
               setAnimations([...animations, { id, name: `anim ${animations.length + 1}`, start: 0, end: Math.min(3, totalFrames - 1), fps: 8, loop: true }]);
@@ -2054,23 +2020,64 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
               </button>
             ))}
           </div>
+          <details ref={libraryDetailsRef} className="studio-optional" open={libraryOpen} onToggle={(event) => setLibraryOpen(event.currentTarget.open)}>
+            <summary>Project Library <span>{activeProject?.assets?.length ?? 0} assets</span></summary>
+          <ProjectLibraryPanel
+            projects={projects}
+            activeProject={activeProject}
+            activeProjectId={activeProjectId}
+            projectNameDraft={projectNameDraft}
+            projectFileInputRef={projectFileInputRef}
+            onSelectProject={(projectId) => setActiveProjectId(projectId)}
+            onRenameProject={renameActiveProject}
+            onCreateProject={createNewProject}
+            onDeleteProject={deleteActiveProject}
+            onSaveAsset={() => saveCurrentAssetToProject()}
+            onSaveCopy={() => saveCurrentAssetToProject(true)}
+            canSave={sourceReady && projectsLoaded}
+            deletedCount={deletedItems.length}
+            onUndoDeletion={undoLibraryDeletion}
+            onBackup={exportCurrentBackup}
+            onLoadAsset={loadProjectAsset}
+            onDeleteAsset={deleteProjectAsset}
+            onRenameAsset={renameSavedAsset}
+            onDuplicateAsset={duplicateSavedAsset}
+            onToggleCompareAsset={toggleCompareAsset}
+            compareAssetIds={compareAssetIds}
+            assetComparison={assetComparison}
+            projectMetrics={activeProjectMetrics}
+            onExportProject={exportActiveProject}
+            onExportProjectZip={exportActiveProjectZip}
+            onImportProject={importProjectBundle}
+          />
+          </details>
+          <details className="studio-optional">
+            <summary>Automatic cleanup <span>Optional</span></summary>
+          <ImportAnalysisPanel
+            analysis={importAnalysis}
+            onAnalyze={reanalyzeImport}
+            onApplyLayout={applyImportLayout}
+            onFill={createFilledSheet}
+          />
+            <div className="cleanup-actions">
+              <button className="secondary-action" onClick={autoDetectKeyColor}>Detect background color</button>
+              <button className="secondary-action" onClick={applyBaselineOffsets}>Apply pivot-based offsets to all frames</button>
+              <button className="secondary-action" onClick={resetOffsets}>Reset all frame offsets</button>
+              <button className="secondary-action" onClick={applyFilledSheet} disabled={!filledSheet}>Apply repacked sheet</button>
+              <button className="secondary-action" onClick={exportFilledSheet} disabled={!filledSheet}>Export repacked PNG</button>
+            </div>
+            <p className="export-help">Repacking creates a new sheet and may change frame order and animation ranges. Keep your original grid for already-organized sheets.</p>
+          </details>
         </aside>
 
         <section className="center-stage">
           <div className="tool-strip">
-            <button className="tool" aria-label="Apply pivot baseline offsets" title="Apply pivot baseline offsets" onClick={applyBaselineOffsets}><AlignCenter size={18} /></button>
-            <button className="tool" title="Reset offsets" onClick={resetOffsets}><RotateCcw size={18} /></button>
-            <span className="strip-divider" />
-            <button className="quick-action" aria-label="Auto-detect key color" title="Auto-detect the solid background key color" onClick={autoDetectKeyColor}><Sparkles size={16} />Key</button>
             <button className={showDetectionOverlay ? 'quick-action active' : 'quick-action'} aria-label="Toggle detected sprite boxes" title="Show or hide detected sprite boxes" onClick={() => setShowDetectionOverlay((value) => !value)} disabled={!importAnalysis?.components?.length}><Grid3X3 size={16} />Boxes</button>
-            <button className="quick-action" aria-label="Fill sheet preview" title="Detect visible frames and build a centered filled sheet" onClick={createFilledSheet}><Grid3X3 size={16} />Fill</button>
-            <button className="quick-action" aria-label="Apply filled sheet" title="Apply the filled sheet to Sprite Studio" onClick={applyFilledSheet} disabled={!filledSheet}><Check size={16} />Apply</button>
-            <button className="quick-action" aria-label="Export filled sheet" title="Export the filled sheet PNG" onClick={exportFilledSheet} disabled={!filledSheet}><Download size={16} />Export</button>
             <span className="strip-divider" />
             <button className="tool" title="Zoom out" onClick={() => setZoom((value) => clamp(value - 0.25, MIN_ZOOM, MAX_ZOOM))}><Minus size={18} /></button>
             <button className="tool" title="Zoom in" onClick={() => setZoom((value) => clamp(value + 0.25, MIN_ZOOM, MAX_ZOOM))}><Plus size={18} /></button>
             <button className="quick-action" aria-label="Fit sheet" title="Fit the whole sheet inside the editor" onClick={() => zoomToFit('sheet')} disabled={!source}><Maximize2 size={16} />Fit</button>
-            <button className="quick-action" aria-label="Fit sheet width" title="Fit the sheet width to the editor" onClick={() => zoomToFit('width')} disabled={!source}><StretchHorizontal size={16} />Width</button>
+            <button className="quick-action" aria-label="Fit sheet width" title="Fit the sheet width to the editor" onClick={() => zoomToFit('width')} disabled={!source}><StretchHorizontal size={16} />Fit width</button>
             <span className="zoom-label">{Math.round(zoom * 100)}%</span>
           </div>
 
@@ -2199,7 +2206,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
         </section>
 
         <aside className="right-panel">
-          <PanelTitle label="Frame" />
+          <PanelTitle label="3. Preview & align" />
           <NumberField label="Index" value={selectedFrame} min={0} max={totalFrames - 1} onChange={selectFrame} />
           <div className="two-inputs">
             <NumberField label="Grid X" value={selectedFrame % columns} min={0} max={columns - 1} onChange={(value) => selectFrame(Math.floor(selectedFrame / columns) * columns + value)} />
@@ -2218,7 +2225,10 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             <NumberField label="Pivot Y" value={pivot.y} min={0} max={frameHeight} onChange={(value) => setPivot((current) => ({ ...current, y: Number(value) }))} />
           </div>
           <div className="preview-box">
-            <canvas ref={previewCanvasRef} />
+            <canvas ref={previewCanvasRef} style={{
+              width: frameWidth * Math.min(4, 192 / Math.max(frameWidth, frameHeight)),
+              height: frameHeight * Math.min(4, 192 / Math.max(frameWidth, frameHeight)),
+            }} />
           </div>
 
           <PanelTitle label="Playback" />
@@ -2258,7 +2268,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             ? 'Up to 14 common source colors. Large images are sampled.'
             : sourceReady ? 'No visible colors in this image.' : 'Load an image to detect its colors.'}</p>
 
-          <PanelTitle label="Export" />
+          <PanelTitle label="4. Export animation" />
           <label className="export-preset-field">
             <span>Metadata Preset</span>
             <select value={metadataPresetId} onChange={(event) => setMetadataPresetId(event.target.value)}>
@@ -2596,208 +2606,6 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
   );
 }
 
-function ProjectLibraryPanel({
-  projects,
-  activeProject,
-  activeProjectId,
-  projectNameDraft,
-  projectFileInputRef,
-  onSelectProject,
-  onRenameProject,
-  onCreateProject,
-  onDeleteProject,
-  onSaveAsset,
-  canSave,
-  deletedCount,
-  onUndoDeletion,
-  onBackup,
-  onLoadAsset,
-  onDeleteAsset,
-  onRenameAsset,
-  onDuplicateAsset,
-  onToggleCompareAsset,
-  compareAssetIds,
-  assetComparison,
-  projectMetrics,
-  onExportProject,
-  onExportProjectZip,
-  onImportProject,
-}) {
-  const assets = activeProject?.assets ?? [];
-
-  return (
-    <section className="project-library-card">
-      <div className="project-library-head">
-        <strong>Project Library</strong>
-        <span>{assets.length} assets</span>
-      </div>
-      <select
-        value={activeProjectId ?? ''}
-        onChange={(event) => onSelectProject(event.target.value || null)}
-        aria-label="Active project"
-      >
-        <option value="">No project selected</option>
-        {projects.map((project) => (
-          <option key={project.id} value={project.id}>{project.name}</option>
-        ))}
-      </select>
-      <input
-        value={projectNameDraft}
-        onChange={(event) => onRenameProject(event.target.value)}
-        placeholder="Project name"
-      />
-      <div className="project-actions">
-        <button type="button" onClick={onCreateProject}>New</button>
-        <button type="button" onClick={onSaveAsset} disabled={!canSave}>Save Project</button>
-        <button type="button" onClick={onExportProject} title="Download saved library assets as an editable project">Project JSON</button>
-        <button type="button" onClick={onExportProjectZip} title="Download saved library assets and their source images">Project ZIP</button>
-        <button type="button" onClick={onBackup} title="Download an editable project including current unsaved changes">Backup</button>
-        <button type="button" onClick={() => projectFileInputRef.current?.click()}>Import</button>
-        <button type="button" onClick={onDeleteProject}>Delete</button>
-        <input
-          ref={projectFileInputRef}
-          type="file"
-          accept="application/json,application/zip,.json,.zip"
-          onChange={(event) => {
-            onImportProject(event.target.files?.[0]);
-            event.target.value = '';
-          }}
-        />
-      </div>
-      <p className="library-storage-note">Saved only in this browser. Download a backup to keep a portable copy.</p>
-      {deletedCount > 0 && (
-        <div className="library-recovery" role="status">
-          <button type="button" onClick={onUndoDeletion}>Undo deletion ({deletedCount})</button>
-          <span>Recovery is available until this tab closes.</span>
-        </div>
-      )}
-      <div className="project-asset-list">
-        {assets.length ? (
-          assets.slice(0, 8).map((asset) => (
-            <div key={asset.id} className="project-asset-row">
-              <button type="button" className="project-asset-load" onClick={() => onLoadAsset(asset)}>
-                <span className="project-asset-thumb" style={{ backgroundImage: asset.source?.url ? `url(${asset.source.url})` : 'none' }} />
-                <span>
-                  <strong>{asset.name}</strong>
-                  <em>{asset.sheet?.columns ?? 1}x{asset.sheet?.rows ?? 1} - {asset.sheet?.frameWidth ?? '-'}px</em>
-                </span>
-              </button>
-              <ProjectAssetNameField asset={asset} onRenameAsset={onRenameAsset} />
-              <div className="project-asset-tools">
-                <label className="project-asset-compare" title={`Compare ${asset.name}`}>
-                  <input
-                    type="checkbox"
-                    checked={compareAssetIds.includes(asset.id)}
-                    onChange={() => onToggleCompareAsset(asset.id)}
-                  />
-                  <GitCompare size={13} />
-                </label>
-                <button type="button" title={`Duplicate ${asset.name}`} onClick={() => onDuplicateAsset(asset.id)}><Copy size={13} /></button>
-                <button type="button" className="project-asset-delete" title={`Delete ${asset.name}`} onClick={() => onDeleteAsset(asset.id)}><X size={13} /></button>
-              </div>
-            </div>
-          ))
-        ) : (
-          <p>Save cleaned batches and source generations here while building a final sheet.</p>
-        )}
-      </div>
-      {assetComparison && (
-        <div className="project-compare-card">
-          <strong>Compare Saved Assets</strong>
-          <div>
-            <span>Name</span><em>{assetComparison.names[0]}</em><em>{assetComparison.names[1]}</em>
-            <span>Grid</span><em>{assetComparison.grid[0]}</em><em>{assetComparison.grid[1]}</em>
-            <span>Frame</span><em>{assetComparison.frameSize[0]}</em><em>{assetComparison.frameSize[1]}</em>
-            <span>Animations</span><em>{assetComparison.animations[0]}</em><em>{assetComparison.animations[1]}</em>
-            <span>Source</span><em>{assetComparison.sourceSize[0]}</em><em>{assetComparison.sourceSize[1]}</em>
-          </div>
-        </div>
-      )}
-      {assets.length > 0 && (
-        <ProjectOptimizationReport metrics={projectMetrics} />
-      )}
-    </section>
-  );
-}
-
-function ProjectOptimizationReport({ metrics }) {
-  const topAssets = metrics.assets.slice(0, 3);
-  const visibleOpportunities = metrics.opportunities.slice(0, 5);
-
-  return (
-    <div className="project-optimization-card">
-      <strong>Optimization Report</strong>
-      <div className="project-metric-grid">
-        <span>Assets</span><em>{metrics.assetCount}</em>
-        <span>Frames</span><em>{formatCompactNumber(metrics.totals.frames)}</em>
-        <span>Source px</span><em>{formatCompactNumber(metrics.totals.sourcePixels)}</em>
-        <span>Export px</span><em>{formatCompactNumber(metrics.totals.exportPixels)}</em>
-        <span>Embedded</span><em>{formatBytes(metrics.totals.sourceBytes)}</em>
-        <span>Unassigned</span><em>{metrics.totals.unanimatedFrames}</em>
-      </div>
-      {visibleOpportunities.length > 0 && (
-        <ul className="project-opportunity-list">
-          {visibleOpportunities.map((item) => (
-            <li key={`${item.asset}-${item.label}`}>
-              <span>{item.asset}</span>
-              <em>{item.label}</em>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="project-metric-assets">
-        {topAssets.map((asset) => (
-          <div key={asset.id}>
-            <span>{asset.name}</span>
-            <em>{asset.gridSize} - {asset.frameSize} - {formatCompactNumber(asset.exportPixels)} export px</em>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ProjectAssetNameField({ asset, onRenameAsset }) {
-  const [draftName, setDraftName] = useState(asset.name ?? '');
-  const skipNextBlurCommitRef = useRef(false);
-
-  useEffect(() => {
-    setDraftName(asset.name ?? '');
-  }, [asset.name]);
-
-  function commitName(nextName = draftName) {
-    const cleanName = nextName.trim();
-    if (cleanName && cleanName !== asset.name) {
-      onRenameAsset(asset.id, cleanName);
-      setDraftName(cleanName);
-    } else {
-      setDraftName(asset.name ?? '');
-    }
-  }
-
-  return (
-    <input
-      className="project-asset-name"
-      value={draftName}
-      aria-label={`Rename ${asset.name}`}
-      onChange={(event) => setDraftName(event.target.value)}
-      onBlur={(event) => {
-        if (skipNextBlurCommitRef.current) {
-          skipNextBlurCommitRef.current = false;
-          return;
-        }
-        commitName(event.currentTarget.value);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          skipNextBlurCommitRef.current = true;
-          commitName(event.currentTarget.value);
-          event.currentTarget.blur();
-        }
-      }}
-    />
-  );
-}
 
 function ImportAnalysisPanel({ analysis, onAnalyze, onApplyLayout, onFill }) {
   if (!analysis) {
@@ -3210,9 +3018,9 @@ function Stepper({ label, value, min, max, onChange }) {
     <div className="stepper">
       <span>{label}</span>
       <div>
-        <button onClick={() => onChange(clamp(value - 1, min, max))}><Minus size={14} /></button>
-        <strong>{value}</strong>
-        <button onClick={() => onChange(clamp(value + 1, min, max))}><Plus size={14} /></button>
+        <button aria-label={`Decrease ${label}`} onClick={() => onChange(clamp(value - 1, min, max))}><Minus size={14} /></button>
+        <input type="number" aria-label={label} value={value} min={min} max={max} onChange={(event) => onChange(clamp(Number(event.target.value), min, max))} />
+        <button aria-label={`Increase ${label}`} onClick={() => onChange(clamp(value + 1, min, max))}><Plus size={14} /></button>
       </div>
     </div>
   );
