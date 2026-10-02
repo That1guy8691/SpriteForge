@@ -41,6 +41,7 @@ import {
 } from './data/promptData';
 import {
   clamp,
+  extractPaletteFromImageData,
   isKeyOrTransparentPixel as isKeyOrTransparentPixelData,
   normalizeHexColor,
   rgbToHex,
@@ -63,9 +64,9 @@ import { removeColorFromCanvas as clearColorFromCanvas } from './lib/exporters.j
 import { swapFrameOffsets } from './lib/frameSwap.js';
 import {
   buildMetadataExport,
-  createMetadataContext,
   EXPORT_PRESETS,
 } from './lib/metadataExport.js';
+import { createAnimationExportPlan, drawAnimationExport } from './lib/spriteSheetExport.js';
 import {
   createProjectExportZip,
   parseProjectExportZipBlob,
@@ -262,6 +263,7 @@ function App() {
   const [loadedAsset, setLoadedAsset] = useState(null);
   const [deletedItems, setDeletedItems] = useState([]);
   const [sourceReady, setSourceReady] = useState(false);
+  const [detectedPalette, setDetectedPalette] = useState([]);
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [compareAssetIds, setCompareAssetIds] = useState([]);
   const [projectNameDraft, setProjectNameDraft] = useState('SpriteForge Project');
@@ -693,11 +695,25 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
   }, [activeAssetGuideId]);
 
   useEffect(() => {
-    if (!source?.url) return;
     setSourceReady(false);
+    setDetectedPalette([]);
+    if (!source?.url) {
+      imageRef.current = null;
+      return;
+    }
     const image = new Image();
     image.onload = () => {
       imageRef.current = image;
+      const paletteCanvas = document.createElement('canvas');
+      const paletteScale = Math.min(1, 256 / Math.max(image.width, image.height));
+      paletteCanvas.width = Math.max(1, Math.round(image.width * paletteScale));
+      paletteCanvas.height = Math.max(1, Math.round(image.height * paletteScale));
+      const paletteCtx = paletteCanvas.getContext('2d');
+      paletteCtx.imageSmoothingEnabled = false;
+      paletteCtx.drawImage(image, 0, 0, paletteCanvas.width, paletteCanvas.height);
+      setDetectedPalette(extractPaletteFromImageData(
+        paletteCtx.getImageData(0, 0, paletteCanvas.width, paletteCanvas.height).data
+      ));
       setSourceReady(true);
       const isNewSource = sourceUrlRef.current !== source.url;
       sourceUrlRef.current = source.url;
@@ -773,7 +789,10 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       }
       requestAnimationFrame(drawPreview);
     };
-    image.onerror = () => setStatus('Could not load source image');
+    image.onerror = () => {
+      imageRef.current = null;
+      setStatus('Could not load source image');
+    };
     image.src = source.url;
     return () => { image.onload = null; image.onerror = null; };
   }, [source]);
@@ -1500,58 +1519,41 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     );
   }
 
+  function selectedAnimationExportPlan() {
+    return createAnimationExportPlan({
+      frameWidth, frameHeight, columns, frameIndices: activeFrames,
+      animation: selectedAnimation, padding, normalizeExport,
+      exportFrameWidth, exportFrameHeight, pivot, offsets,
+      removeKeyBackground, keyColor, keyTolerance,
+    });
+  }
+
   function exportSpriteSheet() {
     const image = imageRef.current;
-    if (!image) return;
-    const frames = activeFrames;
-    const outputColumns = Math.min(frames.length, 8);
-    const outputRows = Math.ceil(frames.length / outputColumns);
-    const outputFrameWidth = normalizeExport ? exportFrameWidth : frameWidth;
-    const outputFrameHeight = normalizeExport ? exportFrameHeight : frameHeight;
-    const offsetScaleX = outputFrameWidth / frameWidth;
-    const offsetScaleY = outputFrameHeight / frameHeight;
+    if (!image || !sourceReady) return;
+    const plan = selectedAnimationExportPlan();
     const canvas = document.createElement('canvas');
-    canvas.width = outputColumns * (outputFrameWidth + padding * 2);
-    canvas.height = outputRows * (outputFrameHeight + padding * 2);
+    canvas.width = plan.width;
+    canvas.height = plan.height;
     const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    frames.forEach((frame, index) => {
-      const rect = frameRect(frame);
-      const offset = currentOffset(frame);
-      const dx = (index % outputColumns) * (outputFrameWidth + padding * 2) + padding + Math.round(offset.x * offsetScaleX);
-      const dy = Math.floor(index / outputColumns) * (outputFrameHeight + padding * 2) + padding + Math.round(offset.y * offsetScaleY);
-      ctx.drawImage(image, rect.sx, rect.sy, rect.sw, rect.sh, dx, dy, outputFrameWidth, outputFrameHeight);
-    });
+    drawAnimationExport(ctx, image, plan);
     const removedPixels = removeKeyBackground ? removeColorFromCanvas(ctx, canvas.width, canvas.height) : 0;
     canvas.toBlob((blob) => {
-      if (blob) downloadBlob(blob, `spriteforge_${selectedAnimation.name}.png`);
+      if (!blob) {
+        setStatus('Could not create animation PNG');
+        return;
+      }
+      downloadBlob(blob, plan.filename);
+      setStatus(`Exported ${selectedAnimation.name} animation PNG${normalizeExport ? ` at ${plan.frameWidth}x${plan.frameHeight}` : ''}${removeKeyBackground ? `, removed ${removedPixels} key pixels` : ''}`);
     }, 'image/png');
-    setStatus(`Exported ${selectedAnimation.name} animation PNG${normalizeExport ? ` at ${outputFrameWidth}x${outputFrameHeight}` : ''}${removeKeyBackground ? `, removed ${removedPixels} key pixels` : ''}`);
   }
 
   function exportMetadata() {
-    const context = createMetadataContext({
-      source,
-      frameWidth,
-      frameHeight,
-      padding,
-      normalizeExport,
-      exportFrameWidth,
-      exportFrameHeight,
-      removeKeyBackground,
-      keyColor,
-      keyTolerance,
-      columns,
-      rows,
-      totalFrames,
-      pivot,
-      offsets,
-      animations,
-    });
-    const { preset, filename, payload } = buildMetadataExport(context, metadataPresetId);
+    if (!sourceReady) return;
+    const plan = selectedAnimationExportPlan();
+    const { preset, filename, payload } = buildMetadataExport(plan.metadataContext, metadataPresetId);
     downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), filename);
-    setStatus(`Exported ${preset.label} metadata`);
+    setStatus(`Exported ${preset.label} metadata for ${plan.filename}`);
   }
 
   async function copyPromptGuide() {
@@ -1885,10 +1887,6 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
     }
   }
 
-  function paletteSwatches() {
-    return ['#111827', '#2f241c', '#70422b', '#a76b43', '#f6d8a9', '#e8edf0', '#cbd5df', '#17445c', '#126c72', '#43a6a5', '#58a869', '#593451', '#e64c3f', '#f0a83b'];
-  }
-
   function fitZoom(mode = 'sheet') {
     const wrap = canvasWrapRef.current;
     const naturalWidth = Math.max(1, columns * frameWidth);
@@ -1915,6 +1913,10 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
   return (
     <main className={darkMode ? 'app-shell theme-dark' : 'app-shell'}>
+      <input
+        id="source-image-input" ref={fileInputRef} type="file" accept="image/*" hidden
+        onChange={(event) => { handleFile(event.target.files?.[0]); event.target.value = ''; }}
+      />
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark"><Sparkles size={22} /></div>
@@ -1954,11 +1956,10 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
       <section className="workspace">
         <aside className="left-panel">
           <PanelTitle label="Source" />
-          <label className="drop-zone" onDrop={(event) => { event.preventDefault(); handleFile(event.dataTransfer.files?.[0]); }} onDragOver={(event) => event.preventDefault()}>
+          <label className="drop-zone" htmlFor="source-image-input" onDrop={(event) => { event.preventDefault(); handleFile(event.dataTransfer.files?.[0]); }} onDragOver={(event) => event.preventDefault()}>
             <ImagePlus size={28} />
             <strong>Import Source</strong>
             <span>PNG, JPG, WEBP or drag and drop</span>
-            <input ref={fileInputRef} type="file" accept="image/*" onChange={(event) => { handleFile(event.target.files?.[0]); event.target.value = ''; }} />
           </label>
 
           <div className="source-card">
@@ -2237,7 +2238,7 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
 
           <PanelTitle label="Detected Palette" />
           <div className="swatches">
-            {paletteSwatches().map((color) => {
+            {detectedPalette.map((color) => {
               const normalizedColor = normalizeHexColor(color);
               const selected = normalizedColor === normalizeHexColor(keyColor);
               return (
@@ -2253,6 +2254,9 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
               );
             })}
           </div>
+          <p className="export-help">{detectedPalette.length
+            ? 'Up to 14 common source colors. Large images are sampled.'
+            : sourceReady ? 'No visible colors in this image.' : 'Load an image to detect its colors.'}</p>
 
           <PanelTitle label="Export" />
           <label className="export-preset-field">
@@ -2285,8 +2289,9 @@ Reject and regenerate any batch where the asset changes proportions, scale, view
             <NumberField label="Tolerance" value={keyTolerance} min={0} max={80} onChange={setKeyTolerance} />
           </div>
           <button className="secondary-action" onClick={pickSelectedFrameCornerColor}>Pick Selected Corner Color</button>
-          <button className="primary-action" onClick={exportSpriteSheet}><Download size={18} />Export Selected Animation</button>
-          <button className="secondary-action" onClick={exportMetadata}><FileJson size={18} />Export Preset Metadata</button>
+          <p className="export-help">PNG and metadata both export only <strong>{selectedAnimation.name}</strong> ({activeFrames.length} frames), with the same resized, padded layout. Offsets are baked into the PNG.</p>
+          <button className="primary-action" disabled={!sourceReady} onClick={exportSpriteSheet}><Download size={18} />Export Animation PNG</button>
+          <button className="secondary-action" disabled={!sourceReady} onClick={exportMetadata}><FileJson size={18} />Export Matching Metadata</button>
           <button className="secondary-action danger" onClick={() => {
             const remainingAnimations = animations.filter((animation) => animation.id !== selectedAnimation.id);
             setAnimations(remainingAnimations);

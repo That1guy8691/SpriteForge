@@ -22,6 +22,19 @@ export function rgbToHex(r, g, b) {
   return `#${[r, g, b].map((value) => clamp(value, 0, 255).toString(16).padStart(2, '0')).join('')}`;
 }
 
+export function extractPaletteFromImageData(data, limit = 14) {
+  const counts = new Map();
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index + 3] < 20) continue;
+    const rgb = (data[index] << 16) | (data[index + 1] << 8) | data[index + 2];
+    counts.set(rgb, (counts.get(rgb) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([rgbA, countA], [rgbB, countB]) => countB - countA || rgbA - rgbB)
+    .slice(0, Math.max(0, limit))
+    .map(([rgb]) => `#${rgb.toString(16).padStart(6, '0')}`);
+}
+
 export function colorDistance(a, b) {
   return Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
 }

@@ -2687,6 +2687,17 @@ button {
   gap: 6px;
 }
 
+.export-help {
+  margin: 8px 0 12px;
+  color: #52616e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.theme-dark .export-help {
+  color: #b7c5d2;
+}
+
 .swatches button {
   height: 28px;
   border: 1px solid #d2dbe4;

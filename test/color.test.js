@@ -1,11 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  extractPaletteFromImageData,
   isKeyOrTransparentPixel,
   normalizeHexColor,
   removeColorFromImageData,
   rgbToHex,
 } from '../src/lib/color.js';
+
+test('extracts actual visible colors by frequency and ignores transparent pixels', () => {
+  const data = new Uint8ClampedArray([
+    0, 0, 255, 255, 255, 255, 0, 255, 0, 0, 255, 255,
+    255, 0, 0, 0, 10, 20, 30, 10,
+  ]);
+  assert.deepEqual(extractPaletteFromImageData(data), ['#0000ff', '#ffff00']);
+  assert.deepEqual(extractPaletteFromImageData(data, 1), ['#0000ff']);
+});
+
+test('palette handles transparent images and ties deterministically', () => {
+  assert.deepEqual(extractPaletteFromImageData(new Uint8ClampedArray(4)), []);
+  const data = new Uint8ClampedArray([255, 255, 0, 255, 0, 0, 255, 255]);
+  assert.deepEqual(extractPaletteFromImageData(data), ['#0000ff', '#ffff00']);
+});
 
 test('normalizes hex colors and clamps RGB output', () => {
   assert.equal(normalizeHexColor('FF00AA'), '#ff00aa');
